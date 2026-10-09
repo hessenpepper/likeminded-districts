@@ -60,12 +60,14 @@ a{color:var(--accent)}
     <label><input type="radio" name="plan" value="enacted"> Enacted (2024 map)</label>
   </fieldset>
   <fieldset><legend>District shading</legend>
-    <label><input type="radio" name="dshade" value="share" checked> D share (red to blue)</label>
-    <label><input type="radio" name="dshade" value="diss"> Dissimilarity (white to brown)</label>
+    <label><input type="radio" name="dshade" value="diss" checked> Dissimilarity (white to brown)</label>
+    <label><input type="radio" name="dshade" value="share"> D share (red to blue)</label>
   </fieldset>
   <fieldset><legend>Precinct shading (zoom in)</legend>
-    <label><input type="radio" name="mode" value="share" checked> Precinct D share</label>
-    <label><input type="radio" name="mode" value="dev"> Precinct vs. its district&rsquo;s D share</label>
+    <label><input type="radio" name="mode" value="absdev" checked> Dissimilarity: distance from its district (white to brown)</label>
+    <label><input type="radio" name="mode" value="share"> Precinct D share (red to blue)</label>
+    <label><input type="radio" name="mode" value="dev"> Precinct vs. its district&rsquo;s D share (red to blue)</label>
+    <label><input type="radio" name="mode" value="off"> Off (districts only)</label>
   </fieldset>
   <div id="legend"></div>
   <div class="row">
@@ -75,7 +77,7 @@ a{color:var(--accent)}
   <details><summary>About the numbers</summary>
     <p><b>Dissimilarity</b> measures how much a district&rsquo;s precincts differ from the district as a whole (0 = every precinct matches). It is population-weighted, assuming non-voters vote like the voters in their own precinct.</p>
     <p><b>Optimized</b> districts come from a computer search (GerryChain/ReCom) that keeps districts contiguous and within &plusmn;0.5% of equal population while minimizing dissimilarity. They are an exploration, not proposed or legally valid maps: they ignore the Voting Rights Act, county lines and communities of interest. Optimized district numbers are arbitrary.</p>
-    <p><b>Seats vs. votes:</b> the seat percentages count districts won by Biden in 2020 and are compared with Biden&rsquo;s share of the two-party presidential vote in the same precincts (the points shown are seat share minus vote share). Zoomed out, each state is shaded by the average dissimilarity of its districts, weighted by population.</p>
+    <p><b>Seats vs. votes:</b> the seat percentages count districts won by Biden in 2020 and are compared with Biden&rsquo;s share of the two-party presidential vote in the same precincts (the points shown are seat share minus vote share). Zoomed out, each state is shaded by the average dissimilarity of its districts, weighted by population. Zoomed in, precincts are shaded by how far they sit from their district's Democratic share, which is what the district's dissimilarity is built from (population-weighted).</p>
     <p>Precinct data is from 2020, so it only roughly matches the current district lines. Enacted plans are rebuilt from whole precincts (about 1% off equal population, with a few split precincts reassigned). Winners are by 2020 presidential votes, not House results.</p>
     <p>Method, code and caveats: <a href="README.md">README</a>.</p>
   </details>
@@ -97,19 +99,28 @@ const map = new maplibregl.Map({
 });
 map.addControl(new maplibregl.NavigationControl({showCompass: false}), 'top-right');
 map.on('zoom', () => { const l = document.getElementById('legS'); if (l) l.style.display = map.getZoom() < ZOOM_STATES ? 'block' : 'none'; });
-let plan = 'optimized', mode = 'share', dshade = 'share';
+let plan = 'optimized', mode = 'absdev', dshade = 'diss';
 
 const dShareColor = ['interpolate', ['linear'], ['get', 'ds'], 20, SHARE[0], 50, SHARE[1], 80, SHARE[2]];
 // dissimilarity: one fixed scale for every state (0.10 = precincts alike ... 0.50+ = precincts differ a lot)
 const DISS = ['#ffffff', '#ead8c3', '#b27a49', '#5a3418'];
 const dissColor = ['interpolate', ['linear'], ['get', 'diss'], 0.10, DISS[0], 0.23, DISS[1], 0.36, DISS[2], 0.50, DISS[3]];
 const districtColor = () => dshade === 'diss' ? dissColor : dShareColor;
+const districtOpacity = () => mode === 'off'
+  ? ['interpolate', ['linear'], ['zoom'], 4.6, 0, ZOOM_STATES, 0.7, 14, 0.7]
+  : ['interpolate', ['linear'], ['zoom'], 4.6, 0, ZOOM_STATES, 0.65, 8, 0.25, 10, 0.0];
 const stateProp = () => plan === 'enacted' ? 'eDiss' : 'oDiss';
 const stateColor = () => ['interpolate', ['linear'], ['get', stateProp()], 0.10, DISS[0], 0.23, DISS[1], 0.36, DISS[2], 0.50, DISS[3]];
 const stateLabel = () => ['format', ['get', 'st'], {}, '\n', {}, ['number-format', ['get', stateProp()], {'min-fraction-digits': 3, 'max-fraction-digits': 3}], {'font-scale': 0.85}];
 const ZOOM_STATES = 5.4;   // zoomed out past this, show whole-state dissimilarity; zoomed in, show districts
+const precinctDev = () => plan === 'enacted' ? 'ed' : 'od';
 function precinctColor() {
-  const dev = mode === 'dev' ? (plan === 'enacted' ? 'ed' : 'od') : null;
+  if (mode === 'absdev') {
+    // each precinct's own share of its district's dissimilarity: how many points it sits from the district's D share
+    return ['case', ['<', ['get', 'p'], 0], '#cccccc',
+      ['interpolate', ['linear'], ['abs', ['get', precinctDev()]], 0, DISS[0], 10, DISS[1], 20, DISS[2], 35, DISS[3]]];
+  }
+  const dev = mode === 'dev' ? precinctDev() : null;
   return dev
     ? ['interpolate', ['linear'], ['get', dev], -40, SHARE[0], 0, SHARE[1], 40, SHARE[2]]
     : ['case', ['<', ['get', 'p'], 0], '#cccccc',
@@ -119,15 +130,17 @@ function renderLegend() {
   const dist = dshade === 'diss'
     ? {t: 'District dissimilarity', g: DISS, lo: '0.10 (precincts alike)', hi: '0.50+ (precincts differ)'}
     : {t: 'District D share', g: SHARE, lo: '20% D', hi: '80% D'};
-  const prec = mode === 'dev'
-    ? {t: 'Precinct vs. its district', lo: '−40 pts (less D than district)', hi: '+40 pts (more D)'}
-    : {t: 'Precinct D share', lo: '10% D', hi: '90% D'};
+  const prec = mode === 'absdev'
+    ? {t: 'Precinct dissimilarity', g: DISS, lo: '0 pts (like its district)', hi: '35+ pts away'}
+    : mode === 'dev'
+      ? {t: 'Precinct vs. its district', g: SHARE, lo: '−40 pts (less D than district)', hi: '+40 pts (more D)'}
+      : {t: 'Precinct D share', g: SHARE, lo: '10% D', hi: '90% D'};
   const bar = g => `<div class="bar" style="background:linear-gradient(90deg,${g.join(',')})"></div>`;
   document.getElementById('legend').innerHTML =
     `<div class="scale"><b>${dist.t}</b></div>${bar(dist.g)}
      <div class="scale"><span>${dist.lo}</span><span>${dist.hi}</span></div>
-     <div class="scale" style="margin-top:6px"><b>${prec.t} (zoom in)</b></div>${bar(SHARE)}
-     <div class="scale"><span>${prec.lo}</span><span>${prec.hi}</span></div>
+     ${mode === 'off' ? '' : `<div class="scale" style="margin-top:6px"><b>${prec.t} (zoom in)</b></div>${bar(prec.g)}
+     <div class="scale"><span>${prec.lo}</span><span>${prec.hi}</span></div>`}
      <div id="legS" style="display:${map.getZoom() < ZOOM_STATES ? 'block' : 'none'}">
        <div class="scale" style="margin-top:6px"><b>Zoomed out: state dissimilarity</b></div>${bar(DISS)}
        <div class="scale"><span>0.10</span><span>0.50+</span></div>
@@ -141,7 +154,9 @@ function apply() {
     map.setLayoutProperty('d-fill-' + pl, 'visibility', v);
     map.setLayoutProperty('d-line-' + pl, 'visibility', v);
     map.setPaintProperty('d-fill-' + pl, 'fill-color', districtColor());
+    map.setPaintProperty('d-fill-' + pl, 'fill-opacity', districtOpacity());
   });
+  map.setLayoutProperty('p-fill', 'visibility', mode === 'off' ? 'none' : 'visible');
   map.setPaintProperty('p-fill', 'fill-color', precinctColor());
   map.setPaintProperty('s-fill', 'fill-color', stateColor());
   map.setLayoutProperty('s-label', 'text-field', stateLabel());
@@ -160,8 +175,9 @@ function init() {
     paint: {'fill-color': stateColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.9, 4.6, 0.9, ZOOM_STATES, 0]}}, firstLabel);
   PLANS.forEach(pl => map.addLayer({id: 'd-fill-' + pl, type: 'fill', source: 'districts', 'source-layer': 'districts',
     filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
-    paint: {'fill-color': districtColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 4.6, 0, ZOOM_STATES, 0.65, 8, 0.25, 10, 0.0]}}, firstLabel));
+    paint: {'fill-color': districtColor(), 'fill-opacity': districtOpacity()}}, firstLabel));
   map.addLayer({id: 'p-fill', type: 'fill', source: 'precincts', 'source-layer': 'precincts', minzoom: 6,
+    layout: {visibility: mode === 'off' ? 'none' : 'visible'},
     paint: {'fill-color': precinctColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 0.8]}}, firstLabel);
   map.addLayer({id: 'p-line', type: 'line', source: 'precincts', 'source-layer': 'precincts', minzoom: 10,
     paint: {'line-color': '#555', 'line-opacity': 0.25, 'line-width': 0.4}}, firstLabel);
@@ -204,7 +220,7 @@ map.on('click', e => {
   }
   if (!map.getLayer('d-fill-' + plan)) return;
   const d = map.queryRenderedFeatures(e.point, {layers: ['d-fill-' + plan]})[0];
-  const p = map.getZoom() >= 7.5 ? map.queryRenderedFeatures(e.point, {layers: ['p-fill']})[0] : null;
+  const p = map.getZoom() >= 7.5 && mode !== 'off' ? map.queryRenderedFeatures(e.point, {layers: ['p-fill']})[0] : null;
   if (!d && !p) return;
   let h = '';
   if (d) {
@@ -221,7 +237,7 @@ map.on('click', e => {
     h += `<h3 style="margin-top:8px">Precinct</h3><table>
       <tr><td>Population</td><td>${fmt(q.pop)}</td></tr>
       <tr><td>D share</td><td>${q.p < 0 ? 'no votes' : q.p + '%'}</td></tr>
-      <tr><td>vs. district</td><td>${q.p < 0 ? '–' : (dev > 0 ? '+' : '') + dev + ' pts'}</td></tr></table>`;
+      <tr><td>vs. district's D share</td><td>${q.p < 0 ? '–' : (dev > 0 ? '+' : '') + dev + ' pts'}</td></tr></table>`;
   }
   new maplibregl.Popup({maxWidth: '280px'}).setLngLat(e.lngLat).setHTML(h).addTo(map);
 });
