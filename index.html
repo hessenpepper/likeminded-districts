@@ -106,9 +106,14 @@ function renderLegend() {
      <div class="scale"><span>${lo}</span><span>${hi}</span></div>
      <div class="scale"><span>District fill: 20% D → 80% D</span></div>`;
 }
+const PLANS = ['optimized', 'enacted'];
 function apply() {
-  map.setFilter('d-fill', ['==', ['get', 'plan'], plan]);
-  map.setFilter('d-line', ['==', ['get', 'plan'], plan]);
+  // one fixed-filter layer per plan; switching plans only toggles visibility
+  PLANS.forEach(pl => {
+    const v = pl === plan ? 'visible' : 'none';
+    map.setLayoutProperty('d-fill-' + pl, 'visibility', v);
+    map.setLayoutProperty('d-line-' + pl, 'visibility', v);
+  });
   map.setPaintProperty('p-fill', 'fill-color', precinctColor());
   renderLegend();
 }
@@ -120,16 +125,16 @@ function init() {
   map.addSource('districts', {type: 'vector', url: 'pmtiles://' + abs('data/districts.pmtiles')});
   map.addSource('precincts', {type: 'vector', url: 'pmtiles://' + abs('data/precincts.pmtiles')});
   const firstLabel = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
-  map.addLayer({id: 'd-fill', type: 'fill', source: 'districts', 'source-layer': 'districts',
-    filter: ['==', ['get', 'plan'], plan],
-    paint: {'fill-color': dShareColor, 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.65, 8, 0.25, 10, 0.0]}}, firstLabel);
+  PLANS.forEach(pl => map.addLayer({id: 'd-fill-' + pl, type: 'fill', source: 'districts', 'source-layer': 'districts',
+    filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
+    paint: {'fill-color': dShareColor, 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.65, 8, 0.25, 10, 0.0]}}, firstLabel));
   map.addLayer({id: 'p-fill', type: 'fill', source: 'precincts', 'source-layer': 'precincts', minzoom: 6,
     paint: {'fill-color': precinctColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 0.8]}}, firstLabel);
   map.addLayer({id: 'p-line', type: 'line', source: 'precincts', 'source-layer': 'precincts', minzoom: 10,
     paint: {'line-color': '#555', 'line-opacity': 0.25, 'line-width': 0.4}}, firstLabel);
-  map.addLayer({id: 'd-line', type: 'line', source: 'districts', 'source-layer': 'districts',
-    filter: ['==', ['get', 'plan'], plan],
-    paint: {'line-color': '#111', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 8, 2, 12, 3]}}, firstLabel);
+  PLANS.forEach(pl => map.addLayer({id: 'd-line-' + pl, type: 'line', source: 'districts', 'source-layer': 'districts',
+    filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
+    paint: {'line-color': '#111', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 8, 2, 12, 3]}}, firstLabel));
   apply();
 }
 // add our layers as soon as the basemap style is ready, without waiting for every basemap tile
@@ -141,8 +146,8 @@ document.querySelectorAll('input[name=mode]').forEach(e => e.addEventListener('c
 
 const fmt = n => Math.round(n).toLocaleString();
 map.on('click', e => {
-  if (!map.getLayer('d-fill')) return;
-  const d = map.queryRenderedFeatures(e.point, {layers: ['d-fill']})[0];
+  if (!map.getLayer('d-fill-' + plan)) return;
+  const d = map.queryRenderedFeatures(e.point, {layers: ['d-fill-' + plan]})[0];
   const p = map.getZoom() >= 7.5 ? map.queryRenderedFeatures(e.point, {layers: ['p-fill']})[0] : null;
   if (!d && !p) return;
   let h = '';
@@ -165,7 +170,7 @@ map.on('click', e => {
   new maplibregl.Popup({maxWidth: '280px'}).setLngLat(e.lngLat).setHTML(h).addTo(map);
 });
 map.on('mousemove', e => {
-  map.getCanvas().style.cursor = map.getLayer('d-fill') && map.queryRenderedFeatures(e.point, {layers: ['d-fill']}).length ? 'pointer' : '';
+  map.getCanvas().style.cursor = map.getLayer('d-fill-' + plan) && map.queryRenderedFeatures(e.point, {layers: ['d-fill-' + plan]}).length ? 'pointer' : '';
 });
 
 fetch('data/stats.json').then(r => r.json()).then(s => {
