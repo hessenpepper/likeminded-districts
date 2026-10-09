@@ -9,7 +9,7 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from shapely.geometry import MultiPolygon
+from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 
 SITE = Path(__file__).resolve().parent.parent   # the repository folder
@@ -29,9 +29,9 @@ BBOX_OVERRIDE = {"AK": [-170.0, 51.2, -129.5, 71.6]}   # the Aleutians cross the
 MIN_PART_DEG2 = 0.002                                   # drop specks smaller than ~25 km2
 
 votes = json.loads((HERE / "state_votes.json").read_text())
-raw = gpd.read_file(DATA / "districts.pmtiles", layer="districts", ZOOM_LEVEL=4)   # outlines: coarse zoom is enough
+raw = gpd.read_file(DATA / "districts.pmtiles", layer="districts", ZOOM_LEVEL=6)   # outlines: small urban districts are still present at this zoom
 raw = raw.to_crs(4326)                                                              # tile reader returns Web Mercator
-print(len(raw), "tile pieces read at zoom 4")
+print(len(raw), "tile pieces read at zoom 6")
 full = gpd.read_file(DATA / "districts.pmtiles", layer="districts")                  # attributes: all districts survive here
 
 # attributes: one row per district (they repeat on every tile piece)
@@ -55,8 +55,12 @@ feats = []
 for st, g in raw[raw.plan == "enacted"].groupby("st"):
     u = unary_union([geom.buffer(0) for geom in g.geometry])
     parts = [p for p in (u.geoms if u.geom_type == "MultiPolygon" else [u]) if p.area >= MIN_PART_DEG2] or [u]
+    parts = [Polygon(q.exterior) for q in parts]      # fill holes left by tiny districts dropped from low-zoom tiles
     u = MultiPolygon(parts) if len(parts) > 1 else parts[0]
     u = u.simplify(0.015, preserve_topology=True)
+    polys = list(u.geoms) if u.geom_type == "MultiPolygon" else [u]
+    polys = [Polygon(q.exterior) for q in polys]      # simplifying can pinch off specks: fill again
+    u = MultiPolygon(polys) if len(polys) > 1 else polys[0]
     feats.append({"st": st, "geometry": u})
 states = gpd.GeoDataFrame(feats, crs=4326).set_index("st").join(tab).reset_index()
 states["pop"] = states["pop"].astype(int)
