@@ -51,6 +51,7 @@ a{color:var(--accent)}
     <div><b id="s_opt">–</b><span>of seats Biden-won, optimized</span><small id="s_opt_d"></small></div>
   </div>
   <p class="sub" id="voteLine" style="margin:0 0 4px"></p>
+  <p class="sub" id="gapLine" style="margin:0 0 4px"></p>
   <div class="stat">
     <div><b id="d_enc">–</b><span>dissimilarity, enacted</span></div>
     <div><b id="d_opt">–</b><span>dissimilarity, optimized</span></div>
@@ -78,6 +79,7 @@ a{color:var(--accent)}
     <p><b>Dissimilarity</b> measures how much a district&rsquo;s precincts differ from the district as a whole (0 = every precinct matches). It is population-weighted, assuming non-voters vote like the voters in their own precinct.</p>
     <p><b>Optimized</b> districts come from a computer search (GerryChain/ReCom) that keeps districts contiguous and within &plusmn;0.5% of equal population while minimizing dissimilarity. They are an exploration, not proposed or legally valid maps: they ignore the Voting Rights Act, county lines and communities of interest. Optimized district numbers are arbitrary.</p>
     <p><b>Seats vs. votes:</b> the seat percentages count districts won by Biden in 2020 and are compared with Biden&rsquo;s share of the two-party presidential vote in the same precincts (the points shown are seat share minus vote share). Zoomed out, each state is shaded by the average dissimilarity of its districts, weighted by population. Zoomed in, precincts are shaded by how far they sit from their district's Democratic share, which is what the district's dissimilarity is built from (population-weighted).</p>
+    <p>The <b>average gap per state</b> averages, over the states with two or more districts, how far each state's share of Biden-won seats is from Biden's share of that state's two-party vote, ignoring direction and weighting states by their number of seats. It is a better test of proportionality than the national net figure, because seats can't move between states and opposite-direction errors cancel in the national total.</p>
     <p>Precinct data is from 2020, so it only roughly matches the current district lines. Enacted plans are rebuilt from whole precincts (about 1% off equal population, with a few split precincts reassigned). Winners are by 2020 presidential votes, not House results.</p>
     <p>Method, code and caveats: <a href="README.md">README</a>.</p>
   </details>
@@ -246,7 +248,17 @@ map.on('mousemove', e => {
   map.getCanvas().style.cursor = map.getLayer('d-fill-' + plan) && map.queryRenderedFeatures(e.point, {layers: ['d-fill-' + plan]}).length ? 'pointer' : '';
 });
 
-let NATION = null;
+let NATION = null, STATE_LIST = null, nationShown = true;
+// average gap between seat share and vote share, ignoring direction, over states with 2+ districts (weighted by seats)
+function renderGap() {
+  const el = document.getElementById('gapLine');
+  if (!nationShown || !STATE_LIST) { el.innerHTML = ''; return; }
+  const m = STATE_LIST.filter(x => x.k > 1);
+  const w = m.reduce((a, x) => a + x.k, 0);
+  const avg = key => m.reduce((a, x) => a + x.k * Math.abs(x[key] / x.k - x.voteD), 0) / w * 100;
+  el.innerHTML = `Average gap per state (seat share vs. vote share, ${m.length} states with 2+ districts): ` +
+    `<b>${avg('eD').toFixed(1)} pts</b> enacted &middot; <b>${avg('oD').toFixed(1)} pts</b> optimized. Smaller = closer to proportional.`;
+}
 function setScope(name, k, eD, oD, voteD, eDiss, oDiss) {
   const set = (id, v) => { document.getElementById(id).textContent = v; };
   set('scopeName', name);
@@ -254,12 +266,16 @@ function setScope(name, k, eD, oD, voteD, eDiss, oDiss) {
   set('s_opt', pct(oD / k)); set('s_opt_d', `${oD} of ${k} seats · ${diffPts(oD / k, voteD)} vs votes`);
   set('voteLine', `Biden's share of the two-party vote: ${pct(voteD)}`);
   set('d_enc', eDiss.toFixed(3)); set('d_opt', oDiss.toFixed(3));
+  nationShown = name === 'United States';
+  renderGap();
 }
 fetch('data/stats.json').then(r => r.json()).then(s => {
   NATION = s;
   setScope('United States', s.districts, s.enacted_D, s.opt_D, s.voteD, s.enacted_diss, s.opt_diss);
 });
 fetch('data/states.json').then(r => r.json()).then(list => {
+  STATE_LIST = list;
+  renderGap();
   const sel = document.getElementById('state');
   list.sort((a, b) => a.name.localeCompare(b.name)).forEach(s => {
     const o = document.createElement('option');
