@@ -58,4 +58,8 @@ precincts that lean very differently. A state's score is the population-weighted
 * `code/`: the scripts that produced the results (`pipeline.py` per-state download and optimization, `driver*.py` batch
   runners, `build_tiles.py` tile builder, `aggregate.py` cross-state comparison).
 
-License for the code has not been chosen yet. The data files are CC BY 4.0 because of the VEST source license.
+## License
+
+* **Code** (`index.html` and everything in `code/`): [MIT License](LICENSE).
+* **Data** (`data/*.pmtiles` and the JSON files): derived from VEST precinct data, so they are **CC BY 4.0**; credit VEST
+  and the Census Bureau as listed above. The MIT license does not cover the data.
