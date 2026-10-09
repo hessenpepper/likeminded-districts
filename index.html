@@ -107,12 +107,13 @@ const DISS = ['#ffffff', '#ead8c3', '#b27a49', '#5a3418'];
 const dissColor = ['interpolate', ['linear'], ['get', 'diss'], 0.10, DISS[0], 0.23, DISS[1], 0.36, DISS[2], 0.50, DISS[3]];
 const districtColor = () => dshade === 'diss' ? dissColor : dShareColor;
 const districtOpacity = () => mode === 'off'
-  ? ['interpolate', ['linear'], ['zoom'], 4.6, 0, ZOOM_STATES, 0.7, 14, 0.7]
-  : ['interpolate', ['linear'], ['zoom'], 4.6, 0, ZOOM_STATES, 0.65, 8, 0.25, 10, 0.0];
+  ? ['interpolate', ['linear'], ['zoom'], ZOOM_STATES, 0, ZOOM_DISTRICTS, 0.7, 14, 0.7]
+  : ['interpolate', ['linear'], ['zoom'], ZOOM_STATES, 0, ZOOM_DISTRICTS, 0.65, 8, 0.25, 10, 0.0];
 const stateProp = () => plan === 'enacted' ? 'eDiss' : 'oDiss';
 const stateColor = () => ['interpolate', ['linear'], ['get', stateProp()], 0.10, DISS[0], 0.23, DISS[1], 0.36, DISS[2], 0.50, DISS[3]];
 const stateLabel = () => ['format', ['get', 'st'], {}, '\n', {}, ['number-format', ['get', stateProp()], {'min-fraction-digits': 3, 'max-fraction-digits': 3}], {'font-scale': 0.85}];
 const ZOOM_STATES = 5.4;   // zoomed out past this, show whole-state dissimilarity; zoomed in, show districts
+const ZOOM_DISTRICTS = 6.0;   // by here the state shading has faded out completely
 const precinctDev = () => plan === 'enacted' ? 'ed' : 'od';
 function precinctColor() {
   if (mode === 'absdev') {
@@ -172,8 +173,8 @@ function init() {
   const firstLabel = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
   map.addSource('states', {type: 'geojson', data: abs('data/states.geojson')});
   map.addLayer({id: 's-fill', type: 'fill', source: 'states',
-    paint: {'fill-color': stateColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.9, 4.6, 0.9, ZOOM_STATES, 0]}}, firstLabel);
-  PLANS.forEach(pl => map.addLayer({id: 'd-fill-' + pl, type: 'fill', source: 'districts', 'source-layer': 'districts',
+    paint: {'fill-color': stateColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.9, ZOOM_STATES, 0.9, ZOOM_DISTRICTS, 0]}}, firstLabel);
+  PLANS.forEach(pl => map.addLayer({id: 'd-fill-' + pl, type: 'fill', source: 'districts', 'source-layer': 'districts', minzoom: ZOOM_STATES,
     filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
     paint: {'fill-color': districtColor(), 'fill-opacity': districtOpacity()}}, firstLabel));
   map.addLayer({id: 'p-fill', type: 'fill', source: 'precincts', 'source-layer': 'precincts', minzoom: 6,
@@ -181,12 +182,12 @@ function init() {
     paint: {'fill-color': precinctColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 0.8]}}, firstLabel);
   map.addLayer({id: 'p-line', type: 'line', source: 'precincts', 'source-layer': 'precincts', minzoom: 10,
     paint: {'line-color': '#555', 'line-opacity': 0.25, 'line-width': 0.4}}, firstLabel);
-  PLANS.forEach(pl => map.addLayer({id: 'd-line-' + pl, type: 'line', source: 'districts', 'source-layer': 'districts',
+  PLANS.forEach(pl => map.addLayer({id: 'd-line-' + pl, type: 'line', source: 'districts', 'source-layer': 'districts', minzoom: ZOOM_STATES,
     filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
-    paint: {'line-color': '#111', 'line-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.25, ZOOM_STATES, 0.9],
+    paint: {'line-color': '#111', 'line-opacity': ['interpolate', ['linear'], ['zoom'], ZOOM_STATES, 0, ZOOM_DISTRICTS, 0.9],
       'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 8, 2, 12, 3]}}, firstLabel));
   map.addLayer({id: 's-line', type: 'line', source: 'states',
-    paint: {'line-color': '#222', 'line-width': 0.9, 'line-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.9, 4.6, 0.9, ZOOM_STATES, 0]}}, firstLabel);
+    paint: {'line-color': '#222', 'line-width': 0.9, 'line-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.9, ZOOM_STATES, 0.9, ZOOM_DISTRICTS, 0]}}, firstLabel);
   map.addLayer({id: 's-label', type: 'symbol', source: 'states', minzoom: 2, maxzoom: ZOOM_STATES,
     layout: {'text-field': stateLabel(), 'text-font': ['Noto Sans Bold'], 'text-size': 12, 'text-line-height': 1.1},
     paint: {'text-color': '#1b1f24', 'text-halo-color': '#ffffff', 'text-halo-width': 1.6}});
