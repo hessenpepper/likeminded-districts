@@ -56,6 +56,10 @@ a{color:var(--accent)}
     <label><input type="radio" name="plan" value="optimized" checked> Optimized (lowest dissimilarity found)</label>
     <label><input type="radio" name="plan" value="enacted"> Enacted (2024 map)</label>
   </fieldset>
+  <fieldset><legend>District shading</legend>
+    <label><input type="radio" name="dshade" value="share" checked> D share (red to blue)</label>
+    <label><input type="radio" name="dshade" value="diss"> Dissimilarity (white to brown)</label>
+  </fieldset>
   <fieldset><legend>Precinct shading (zoom in)</legend>
     <label><input type="radio" name="mode" value="share" checked> Precinct D share</label>
     <label><input type="radio" name="mode" value="dev"> Precinct vs. its district&rsquo;s D share</label>
@@ -88,9 +92,13 @@ const map = new maplibregl.Map({
   attributionControl: {compact: true, customAttribution: 'Precincts: VEST (CC BY 4.0) · Census 2020'}
 });
 map.addControl(new maplibregl.NavigationControl({showCompass: false}), 'top-right');
-let plan = 'optimized', mode = 'share';
+let plan = 'optimized', mode = 'share', dshade = 'share';
 
 const dShareColor = ['interpolate', ['linear'], ['get', 'ds'], 20, SHARE[0], 50, SHARE[1], 80, SHARE[2]];
+// dissimilarity: one fixed scale for every state (0.10 = precincts alike ... 0.50+ = precincts differ a lot)
+const DISS = ['#ffffff', '#ead8c3', '#b27a49', '#5a3418'];
+const dissColor = ['interpolate', ['linear'], ['get', 'diss'], 0.10, DISS[0], 0.23, DISS[1], 0.36, DISS[2], 0.50, DISS[3]];
+const districtColor = () => dshade === 'diss' ? dissColor : dShareColor;
 function precinctColor() {
   const dev = mode === 'dev' ? (plan === 'enacted' ? 'ed' : 'od') : null;
   return dev
@@ -99,12 +107,18 @@ function precinctColor() {
        ['interpolate', ['linear'], ['get', 'p'], 10, SHARE[0], 50, SHARE[1], 90, SHARE[2]]];
 }
 function renderLegend() {
-  const lo = mode === 'dev' ? '−40 pts (less D than district)' : '10% D';
-  const hi = mode === 'dev' ? '+40 pts (more D)' : '90% D';
+  const dist = dshade === 'diss'
+    ? {t: 'District dissimilarity', g: DISS, lo: '0.10 (precincts alike)', hi: '0.50+ (precincts differ)'}
+    : {t: 'District D share', g: SHARE, lo: '20% D', hi: '80% D'};
+  const prec = mode === 'dev'
+    ? {t: 'Precinct vs. its district', lo: '−40 pts (less D than district)', hi: '+40 pts (more D)'}
+    : {t: 'Precinct D share', lo: '10% D', hi: '90% D'};
+  const bar = g => `<div class="bar" style="background:linear-gradient(90deg,${g.join(',')})"></div>`;
   document.getElementById('legend').innerHTML =
-    `<div class="bar" style="background:linear-gradient(90deg,${SHARE.join(',')})"></div>
-     <div class="scale"><span>${lo}</span><span>${hi}</span></div>
-     <div class="scale"><span>District fill: 20% D → 80% D</span></div>`;
+    `<div class="scale"><b>${dist.t}</b></div>${bar(dist.g)}
+     <div class="scale"><span>${dist.lo}</span><span>${dist.hi}</span></div>
+     <div class="scale" style="margin-top:6px"><b>${prec.t} (zoom in)</b></div>${bar(SHARE)}
+     <div class="scale"><span>${prec.lo}</span><span>${prec.hi}</span></div>`;
 }
 const PLANS = ['optimized', 'enacted'];
 function apply() {
@@ -113,6 +127,7 @@ function apply() {
     const v = pl === plan ? 'visible' : 'none';
     map.setLayoutProperty('d-fill-' + pl, 'visibility', v);
     map.setLayoutProperty('d-line-' + pl, 'visibility', v);
+    map.setPaintProperty('d-fill-' + pl, 'fill-color', districtColor());
   });
   map.setPaintProperty('p-fill', 'fill-color', precinctColor());
   renderLegend();
@@ -127,7 +142,7 @@ function init() {
   const firstLabel = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
   PLANS.forEach(pl => map.addLayer({id: 'd-fill-' + pl, type: 'fill', source: 'districts', 'source-layer': 'districts',
     filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
-    paint: {'fill-color': dShareColor, 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.65, 8, 0.25, 10, 0.0]}}, firstLabel));
+    paint: {'fill-color': districtColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.65, 8, 0.25, 10, 0.0]}}, firstLabel));
   map.addLayer({id: 'p-fill', type: 'fill', source: 'precincts', 'source-layer': 'precincts', minzoom: 6,
     paint: {'fill-color': precinctColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 0.8]}}, firstLabel);
   map.addLayer({id: 'p-line', type: 'line', source: 'precincts', 'source-layer': 'precincts', minzoom: 10,
@@ -142,6 +157,7 @@ map.on('style.load', init);
 if (map.isStyleLoaded()) init();
 
 document.querySelectorAll('input[name=plan]').forEach(e => e.addEventListener('change', () => { if (e.checked) { plan = e.value; apply(); } }));
+document.querySelectorAll('input[name=dshade]').forEach(e => e.addEventListener('change', () => { if (e.checked) { dshade = e.value; apply(); } }));
 document.querySelectorAll('input[name=mode]').forEach(e => e.addEventListener('change', () => { if (e.checked) { mode = e.value; apply(); } }));
 
 const fmt = n => Math.round(n).toLocaleString();
