@@ -29,10 +29,9 @@ BBOX_OVERRIDE = {"AK": [-170.0, 51.2, -129.5, 71.6]}   # the Aleutians cross the
 MIN_PART_DEG2 = 0.002                                   # drop specks smaller than ~25 km2
 
 votes = json.loads((HERE / "state_votes.json").read_text())
-raw = gpd.read_file(DATA / "districts.pmtiles", layer="districts", ZOOM_LEVEL=6)   # outlines: small urban districts are still present at this zoom
-raw = raw.to_crs(4326)                                                              # tile reader returns Web Mercator
-print(len(raw), "tile pieces read at zoom 6")
 full = gpd.read_file(DATA / "districts.pmtiles", layer="districts")                  # attributes: all districts survive here
+print(len(full), "tile pieces read at full detail")
+raw = full.to_crs(4326)      # outlines come from the same full-detail pieces (both plans); reader returns Web Mercator
 
 # attributes: one row per district (they repeat on every tile piece)
 att = full.drop(columns="geometry").drop_duplicates(["plan", "st", "lab"])
@@ -52,7 +51,7 @@ tab = pd.DataFrame(rows).set_index("st")
 
 # state outlines: union of the enacted-plan pieces at zoom 4
 feats = []
-for st, g in raw[raw.plan == "enacted"].groupby("st"):
+for st, g in raw.groupby("st"):
     u = unary_union([geom.buffer(0) for geom in g.geometry])
     parts = [p for p in (u.geoms if u.geom_type == "MultiPolygon" else [u]) if p.area >= MIN_PART_DEG2] or [u]
     parts = [Polygon(q.exterior) for q in parts]      # fill holes left by tiny districts dropped from low-zoom tiles
@@ -65,6 +64,16 @@ for st, g in raw[raw.plan == "enacted"].groupby("st"):
 states = gpd.GeoDataFrame(feats, crs=4326).set_index("st").join(tab).reset_index()
 states["pop"] = states["pop"].astype(int)
 states.to_file(DATA / "states.geojson", driver="GeoJSON", COORDINATE_PRECISION=3)
+
+# coverage check: every district piece must lie inside its state's outline
+shape_by_st = {r["st"]: r["geometry"] for _, r in states.iterrows()}
+bad = []
+for st, g in raw.groupby("st"):
+    outline = shape_by_st[st].buffer(0.03)
+    for _, row in g.iterrows():
+        if not outline.contains(row.geometry.representative_point()):
+            bad.append((st, row.plan, int(row.lab)))
+print("district pieces outside their state outline:", len(bad), bad[:6])
 
 # picker list with bounding boxes
 out = []
