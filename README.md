@@ -55,9 +55,11 @@ precincts that lean very differently. A state's score is the population-weighted
 
 * `index.html`: the whole viewer (static; loads tiles with HTTP range requests).
   Districts can be shaded by Democratic share or by dissimilarity (one fixed scale for all states: 0.10 to 0.50+).
-* `data/districts.pmtiles`, `data/precincts.pmtiles`: vector tiles. `data/states.json`, `data/stats.json`: the state list and headline numbers.
+  Zoomed out, each state is shaded and labeled by the average dissimilarity of its districts (population-weighted, same scale);
+  the side panel shows seat shares as percentages next to Biden's share of the two-party vote, nationally or for a chosen state.
+* `data/districts.pmtiles`, `data/precincts.pmtiles`: vector tiles. `data/states.geojson` (state outlines with seat counts, dissimilarity and vote share), `data/states.json`, `data/stats.json`: the state list and headline numbers.
 * `code/`: the scripts that produced the results (`pipeline.py` per-state download and optimization, `driver*.py` batch
-  runners, `build_tiles.py` tile builder, `aggregate.py` cross-state comparison).
+  runners, `build_tiles.py` tile builder, `state_votes.py` / `make_states_layer.py` state-level numbers, `aggregate.py` cross-state comparison).
 
 ## License
 

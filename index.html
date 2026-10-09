@@ -19,6 +19,7 @@ h1{font-size:16px;margin:0 0 4px}
 .stat div{flex:1;border:1px solid var(--line);border-radius:6px;padding:6px 8px}
 .stat b{display:block;font-size:19px}
 .stat span{color:var(--muted);font-size:11.5px}
+.stat small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
 fieldset{border:0;padding:0;margin:10px 0 0}
 legend{font-weight:600;font-size:12.5px;padding:0;margin-bottom:3px}
 label{display:block;padding:1px 0;cursor:pointer}
@@ -44,10 +45,12 @@ a{color:var(--accent)}
 <div id="side" class="panel">
   <h1>Like-Minded Districts</h1>
   <p class="sub">Congressional districts, enacted vs. computer-optimized to group like-minded precincts. 2020 presidential results.</p>
+  <p class="sub" style="margin:0 0 2px"><b id="scopeName" style="color:var(--fg)">United States</b></p>
   <div class="stat">
-    <div><b id="s_enc">–</b><span>Biden-won districts, enacted</span></div>
-    <div><b id="s_opt">–</b><span>Biden-won districts, optimized</span></div>
+    <div><b id="s_enc">–</b><span>of seats Biden-won, enacted</span><small id="s_enc_d"></small></div>
+    <div><b id="s_opt">–</b><span>of seats Biden-won, optimized</span><small id="s_opt_d"></small></div>
   </div>
+  <p class="sub" id="voteLine" style="margin:0 0 4px"></p>
   <div class="stat">
     <div><b id="d_enc">–</b><span>dissimilarity, enacted</span></div>
     <div><b id="d_opt">–</b><span>dissimilarity, optimized</span></div>
@@ -72,6 +75,7 @@ a{color:var(--accent)}
   <details><summary>About the numbers</summary>
     <p><b>Dissimilarity</b> measures how much a district&rsquo;s precincts differ from the district as a whole (0 = every precinct matches). It is population-weighted, assuming non-voters vote like the voters in their own precinct.</p>
     <p><b>Optimized</b> districts come from a computer search (GerryChain/ReCom) that keeps districts contiguous and within &plusmn;0.5% of equal population while minimizing dissimilarity. They are an exploration, not proposed or legally valid maps: they ignore the Voting Rights Act, county lines and communities of interest. Optimized district numbers are arbitrary.</p>
+    <p><b>Seats vs. votes:</b> the seat percentages count districts won by Biden in 2020 and are compared with Biden&rsquo;s share of the two-party presidential vote in the same precincts (the points shown are seat share minus vote share). Zoomed out, each state is shaded by the average dissimilarity of its districts, weighted by population.</p>
     <p>Precinct data is from 2020, so it only roughly matches the current district lines. Enacted plans are rebuilt from whole precincts (about 1% off equal population, with a few split precincts reassigned). Winners are by 2020 presidential votes, not House results.</p>
     <p>Method, code and caveats: <a href="README.md">README</a>.</p>
   </details>
@@ -92,6 +96,7 @@ const map = new maplibregl.Map({
   attributionControl: {compact: true, customAttribution: 'Precincts: VEST (CC BY 4.0) · Census 2020'}
 });
 map.addControl(new maplibregl.NavigationControl({showCompass: false}), 'top-right');
+map.on('zoom', () => { const l = document.getElementById('legS'); if (l) l.style.display = map.getZoom() < ZOOM_STATES ? 'block' : 'none'; });
 let plan = 'optimized', mode = 'share', dshade = 'share';
 
 const dShareColor = ['interpolate', ['linear'], ['get', 'ds'], 20, SHARE[0], 50, SHARE[1], 80, SHARE[2]];
@@ -99,6 +104,10 @@ const dShareColor = ['interpolate', ['linear'], ['get', 'ds'], 20, SHARE[0], 50,
 const DISS = ['#ffffff', '#ead8c3', '#b27a49', '#5a3418'];
 const dissColor = ['interpolate', ['linear'], ['get', 'diss'], 0.10, DISS[0], 0.23, DISS[1], 0.36, DISS[2], 0.50, DISS[3]];
 const districtColor = () => dshade === 'diss' ? dissColor : dShareColor;
+const stateProp = () => plan === 'enacted' ? 'eDiss' : 'oDiss';
+const stateColor = () => ['interpolate', ['linear'], ['get', stateProp()], 0.10, DISS[0], 0.23, DISS[1], 0.36, DISS[2], 0.50, DISS[3]];
+const stateLabel = () => ['format', ['get', 'st'], {}, '\n', {}, ['number-format', ['get', stateProp()], {'min-fraction-digits': 3, 'max-fraction-digits': 3}], {'font-scale': 0.85}];
+const ZOOM_STATES = 5.4;   // zoomed out past this, show whole-state dissimilarity; zoomed in, show districts
 function precinctColor() {
   const dev = mode === 'dev' ? (plan === 'enacted' ? 'ed' : 'od') : null;
   return dev
@@ -118,7 +127,11 @@ function renderLegend() {
     `<div class="scale"><b>${dist.t}</b></div>${bar(dist.g)}
      <div class="scale"><span>${dist.lo}</span><span>${dist.hi}</span></div>
      <div class="scale" style="margin-top:6px"><b>${prec.t} (zoom in)</b></div>${bar(SHARE)}
-     <div class="scale"><span>${prec.lo}</span><span>${prec.hi}</span></div>`;
+     <div class="scale"><span>${prec.lo}</span><span>${prec.hi}</span></div>
+     <div id="legS" style="display:${map.getZoom() < ZOOM_STATES ? 'block' : 'none'}">
+       <div class="scale" style="margin-top:6px"><b>Zoomed out: state dissimilarity</b></div>${bar(DISS)}
+       <div class="scale"><span>0.10</span><span>0.50+</span></div>
+       <div class="scale"><span>average of the state&rsquo;s districts, ${plan}</span></div></div>`;
 }
 const PLANS = ['optimized', 'enacted'];
 function apply() {
@@ -130,6 +143,8 @@ function apply() {
     map.setPaintProperty('d-fill-' + pl, 'fill-color', districtColor());
   });
   map.setPaintProperty('p-fill', 'fill-color', precinctColor());
+  map.setPaintProperty('s-fill', 'fill-color', stateColor());
+  map.setLayoutProperty('s-label', 'text-field', stateLabel());
   renderLegend();
 }
 
@@ -140,16 +155,25 @@ function init() {
   map.addSource('districts', {type: 'vector', url: 'pmtiles://' + abs('data/districts.pmtiles')});
   map.addSource('precincts', {type: 'vector', url: 'pmtiles://' + abs('data/precincts.pmtiles')});
   const firstLabel = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
+  map.addSource('states', {type: 'geojson', data: abs('data/states.geojson')});
+  map.addLayer({id: 's-fill', type: 'fill', source: 'states',
+    paint: {'fill-color': stateColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.9, 4.6, 0.9, ZOOM_STATES, 0]}}, firstLabel);
   PLANS.forEach(pl => map.addLayer({id: 'd-fill-' + pl, type: 'fill', source: 'districts', 'source-layer': 'districts',
     filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
-    paint: {'fill-color': districtColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.65, 8, 0.25, 10, 0.0]}}, firstLabel));
+    paint: {'fill-color': districtColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 4.6, 0, ZOOM_STATES, 0.65, 8, 0.25, 10, 0.0]}}, firstLabel));
   map.addLayer({id: 'p-fill', type: 'fill', source: 'precincts', 'source-layer': 'precincts', minzoom: 6,
     paint: {'fill-color': precinctColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 0.8]}}, firstLabel);
   map.addLayer({id: 'p-line', type: 'line', source: 'precincts', 'source-layer': 'precincts', minzoom: 10,
     paint: {'line-color': '#555', 'line-opacity': 0.25, 'line-width': 0.4}}, firstLabel);
   PLANS.forEach(pl => map.addLayer({id: 'd-line-' + pl, type: 'line', source: 'districts', 'source-layer': 'districts',
     filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
-    paint: {'line-color': '#111', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 8, 2, 12, 3]}}, firstLabel));
+    paint: {'line-color': '#111', 'line-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.25, ZOOM_STATES, 0.9],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 8, 2, 12, 3]}}, firstLabel));
+  map.addLayer({id: 's-line', type: 'line', source: 'states',
+    paint: {'line-color': '#222', 'line-width': 0.9, 'line-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.9, 4.6, 0.9, ZOOM_STATES, 0]}}, firstLabel);
+  map.addLayer({id: 's-label', type: 'symbol', source: 'states', minzoom: 2, maxzoom: ZOOM_STATES,
+    layout: {'text-field': stateLabel(), 'text-font': ['Noto Sans Bold'], 'text-size': 12, 'text-line-height': 1.1},
+    paint: {'text-color': '#1b1f24', 'text-halo-color': '#ffffff', 'text-halo-width': 1.6}});
   apply();
 }
 // add our layers as soon as the basemap style is ready, without waiting for every basemap tile
@@ -161,7 +185,23 @@ document.querySelectorAll('input[name=dshade]').forEach(e => e.addEventListener(
 document.querySelectorAll('input[name=mode]').forEach(e => e.addEventListener('change', () => { if (e.checked) { mode = e.value; apply(); } }));
 
 const fmt = n => Math.round(n).toLocaleString();
+const pct = x => (x * 100).toFixed(1) + '%';
+const diffPts = (seat, vote) => { const d = (seat - vote) * 100; return (d > 0 ? '+' : d < 0 ? '−' : '') + Math.abs(d).toFixed(1) + ' pts'; };
 map.on('click', e => {
+  if (map.getZoom() < ZOOM_STATES && map.getLayer('s-fill')) {
+    const f = map.queryRenderedFeatures(e.point, {layers: ['s-fill']})[0];
+    if (!f) return;
+    const a = f.properties;
+    const row = (lab, D) => `<tr><td>${lab}</td><td>${D} of ${a.k} (${pct(D / a.k)}, ${diffPts(D / a.k, a.voteD)})</td></tr>`;
+    new maplibregl.Popup({maxWidth: '300px'}).setLngLat(e.lngLat).setHTML(
+      `<h3>${a.name}</h3><table>
+       <tr><td>Districts</td><td>${a.k}</td></tr>
+       <tr><td>Biden two-party vote</td><td>${pct(a.voteD)}</td></tr>
+       ${row('Biden-won seats, enacted', a.eD)}${row('Biden-won seats, optimized', a.oD)}
+       <tr><td>Dissimilarity, enacted</td><td>${a.eDiss.toFixed(3)}</td></tr>
+       <tr><td>Dissimilarity, optimized</td><td>${a.oDiss.toFixed(3)}</td></tr></table>`).addTo(map);
+    return;
+  }
   if (!map.getLayer('d-fill-' + plan)) return;
   const d = map.queryRenderedFeatures(e.point, {layers: ['d-fill-' + plan]})[0];
   const p = map.getZoom() >= 7.5 ? map.queryRenderedFeatures(e.point, {layers: ['p-fill']})[0] : null;
@@ -189,11 +229,18 @@ map.on('mousemove', e => {
   map.getCanvas().style.cursor = map.getLayer('d-fill-' + plan) && map.queryRenderedFeatures(e.point, {layers: ['d-fill-' + plan]}).length ? 'pointer' : '';
 });
 
+let NATION = null;
+function setScope(name, k, eD, oD, voteD, eDiss, oDiss) {
+  const set = (id, v) => { document.getElementById(id).textContent = v; };
+  set('scopeName', name);
+  set('s_enc', pct(eD / k)); set('s_enc_d', `${eD} of ${k} seats · ${diffPts(eD / k, voteD)} vs votes`);
+  set('s_opt', pct(oD / k)); set('s_opt_d', `${oD} of ${k} seats · ${diffPts(oD / k, voteD)} vs votes`);
+  set('voteLine', `Biden's share of the two-party vote: ${pct(voteD)}`);
+  set('d_enc', eDiss.toFixed(3)); set('d_opt', oDiss.toFixed(3));
+}
 fetch('data/stats.json').then(r => r.json()).then(s => {
-  document.getElementById('s_enc').textContent = `${s.enacted_D} / ${s.districts}`;
-  document.getElementById('s_opt').textContent = `${s.opt_D} / ${s.districts}`;
-  document.getElementById('d_enc').textContent = s.enacted_diss.toFixed(3);
-  document.getElementById('d_opt').textContent = s.opt_diss.toFixed(3);
+  NATION = s;
+  setScope('United States', s.districts, s.enacted_D, s.opt_D, s.voteD, s.enacted_diss, s.opt_diss);
 });
 fetch('data/states.json').then(r => r.json()).then(list => {
   const sel = document.getElementById('state');
@@ -205,10 +252,17 @@ fetch('data/states.json').then(r => r.json()).then(list => {
   });
   sel.addEventListener('change', () => {
     const s = list.find(x => x.st === sel.value);
-    if (s) map.fitBounds([[s.bbox[0], s.bbox[1]], [s.bbox[2], s.bbox[3]]], {padding: 40, maxZoom: 9});
+    if (s) {
+      setScope(s.name, s.k, s.eD, s.oD, s.voteD, s.eDiss, s.oDiss);
+      map.fitBounds([[s.bbox[0], s.bbox[1]], [s.bbox[2], s.bbox[3]]], {padding: 40, maxZoom: 9});
+    }
   });
 });
-document.getElementById('lower48').addEventListener('click', () => map.fitBounds([[-125, 24.3], [-66.8, 49.6]], {padding: 20}));
+document.getElementById('lower48').addEventListener('click', () => {
+  if (NATION) setScope('United States', NATION.districts, NATION.enacted_D, NATION.opt_D, NATION.voteD, NATION.enacted_diss, NATION.opt_diss);
+  document.getElementById('state').value = '';
+  map.fitBounds([[-125, 24.3], [-66.8, 49.6]], {padding: 20});
+});
 renderLegend();
 </script>
 </body>
