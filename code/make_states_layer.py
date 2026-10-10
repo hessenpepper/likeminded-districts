@@ -59,6 +59,7 @@ tab = pd.DataFrame(rows).set_index("st")
 feats = []
 for st, g in raw.groupby("st"):
     u = unary_union([geom.buffer(0) for geom in g.geometry])
+    u = u.buffer(0.004).buffer(-0.004)      # close hairline cracks where tile-clipped pieces meet (tile edges)
     parts = [p for p in (u.geoms if u.geom_type == "MultiPolygon" else [u]) if p.area >= MIN_PART_DEG2] or [u]
     parts = [Polygon(q.exterior) for q in parts]      # fill holes left by tiny districts dropped from low-zoom tiles
     u = MultiPolygon(parts) if len(parts) > 1 else parts[0]
