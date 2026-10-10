@@ -61,15 +61,10 @@ a{color:var(--accent)}
     <label><input type="radio" name="plan" value="optimized" checked> Optimized (lowest dissimilarity found)</label>
     <label><input type="radio" name="plan" value="enacted"> Enacted (2024 map)</label>
   </fieldset>
-  <fieldset><legend>District shading</legend>
+  <fieldset><legend>Shading</legend>
     <label><input type="radio" name="dshade" value="diss" checked> Dissimilarity (white to brown)</label>
     <label><input type="radio" name="dshade" value="share"> D share (red to blue)</label>
-  </fieldset>
-  <fieldset><legend>Precinct shading (zoom in)</legend>
-    <label><input type="radio" name="mode" value="absdev" checked> Dissimilarity: distance from its district (white to brown)</label>
-    <label><input type="radio" name="mode" value="share"> Precinct D share (red to blue)</label>
-    <label><input type="radio" name="mode" value="dev"> Precinct vs. its district&rsquo;s D share (red to blue)</label>
-    <label><input type="radio" name="mode" value="off"> Off (districts only)</label>
+    <label style="margin-top:6px"><input type="checkbox" id="showPrec" checked> Show precincts (zoom in)</label>
   </fieldset>
   <div id="legend"></div>
   <div class="row">
@@ -181,14 +176,14 @@ function init() {
   const firstLabel = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
   map.addSource('states', {type: 'geojson', data: abs('data/states.geojson')});
   map.addLayer({id: 's-fill', type: 'fill', source: 'states',
-    paint: {'fill-color': stateColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.9, ZOOM_STATES, 0.9, ZOOM_DISTRICTS, 0]}}, firstLabel);
+    paint: {'fill-antialias': false, 'fill-color': stateColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.9, ZOOM_STATES, 0.9, ZOOM_DISTRICTS, 0]}}, firstLabel);
   PLANS.forEach(pl => map.addLayer({id: 'd-fill-' + pl, type: 'fill', source: 'districts', 'source-layer': 'districts', minzoom: ZOOM_STATES,
     filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
-    paint: {'fill-color': districtColor(), 'fill-opacity': districtOpacity()}}, firstLabel));
+    paint: {'fill-antialias': false, 'fill-color': districtColor(), 'fill-opacity': districtOpacity()}}, firstLabel));
   PREC.forEach(n => {
     map.addLayer({id: 'p-fill-' + n, type: 'fill', source: 'precincts-' + n, 'source-layer': 'precincts', minzoom: 6,
       layout: {visibility: mode === 'off' ? 'none' : 'visible'},
-      paint: {'fill-color': precinctColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 0.8]}}, firstLabel);
+      paint: {'fill-antialias': false, 'fill-color': precinctColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 0.8]}}, firstLabel);
     map.addLayer({id: 'p-line-' + n, type: 'line', source: 'precincts-' + n, 'source-layer': 'precincts', minzoom: 10,
       paint: {'line-color': '#555', 'line-opacity': 0.25, 'line-width': 0.4}}, firstLabel);
   });
@@ -208,8 +203,10 @@ map.on('style.load', init);
 if (map.isStyleLoaded()) init();
 
 document.querySelectorAll('input[name=plan]').forEach(e => e.addEventListener('change', () => { if (e.checked) { plan = e.value; apply(); } }));
-document.querySelectorAll('input[name=dshade]').forEach(e => e.addEventListener('change', () => { if (e.checked) { dshade = e.value; apply(); } }));
-document.querySelectorAll('input[name=mode]').forEach(e => e.addEventListener('change', () => { if (e.checked) { mode = e.value; apply(); } }));
+// one shading choice for districts and precincts; precincts can be switched off separately
+function syncMode() { mode = !document.getElementById('showPrec').checked ? 'off' : (dshade === 'diss' ? 'absdev' : 'share'); }
+document.querySelectorAll('input[name=dshade]').forEach(e => e.addEventListener('change', () => { if (e.checked) { dshade = e.value; syncMode(); apply(); } }));
+document.getElementById('showPrec').addEventListener('change', () => { syncMode(); apply(); });
 
 const fmt = n => Math.round(n).toLocaleString();
 const pct = x => (x * 100).toFixed(1) + '%';
