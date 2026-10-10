@@ -44,7 +44,7 @@ a{color:var(--accent)}
 <div id="map"></div>
 <div id="side" class="panel">
   <h1>Like-Minded Districts</h1>
-  <p class="sub">Congressional districts, enacted vs. computer-optimized to group like-minded precincts. 2020 presidential results.</p>
+  <p class="sub">Congressional districts, enacted vs. computer-optimized to group like-minded precincts. 2020 presidential results. Optimized plans keep every state&rsquo;s count of majority-Black and majority-Hispanic districts.</p>
   <p class="sub" style="margin:0 0 2px"><b id="scopeName" style="color:var(--fg)">United States</b></p>
   <div class="stat">
     <div><b id="s_enc">–</b><span>of seats Biden-won, enacted</span><small id="s_enc_d"></small></div>
@@ -52,6 +52,7 @@ a{color:var(--accent)}
   </div>
   <p class="sub" id="voteLine" style="margin:0 0 4px"></p>
   <p class="sub" id="gapLine" style="margin:0 0 4px"></p>
+  <p class="sub" id="mmLine" style="margin:0 0 4px"></p>
   <div class="stat">
     <div><b id="d_enc">–</b><span>dissimilarity, enacted</span></div>
     <div><b id="d_opt">–</b><span>dissimilarity, optimized</span></div>
@@ -77,7 +78,9 @@ a{color:var(--accent)}
   </div>
   <details><summary>About the numbers</summary>
     <p><b>Dissimilarity</b> measures how much a district&rsquo;s precincts differ from the district as a whole (0 = every precinct matches). It is population-weighted, assuming non-voters vote like the voters in their own precinct.</p>
-    <p><b>Optimized</b> districts come from a computer search (GerryChain/ReCom) that keeps districts contiguous and within &plusmn;0.5% of equal population while minimizing dissimilarity. They are an exploration, not proposed or legally valid maps: they ignore the Voting Rights Act, county lines and communities of interest. Optimized district numbers are arbitrary.</p>
+    <p><b>Optimized</b> districts come from a computer search (GerryChain/ReCom) that keeps districts contiguous (rook contiguity: a district must connect across shared boundaries, not just at a corner) and within &plusmn;0.5% of equal population while minimizing dissimilarity.</p>
+    <p><b>Voting Rights Act check:</b> every optimized plan keeps at least as many majority-Black and as many majority-Hispanic districts (more than 50% of voting-age population) as the enacted plan in that state. This is a hard rule during the search, so plans below it are never accepted. It is a count-based check, not a legal VRA analysis: it does not test whether minority voters can elect their preferred candidates, racially polarized voting or other Gingles factors.</p>
+    <p>The optimized plans are an exploration, not proposed or legally valid maps: they ignore county lines and communities of interest. Optimized district numbers are arbitrary.</p>
     <p><b>Seats vs. votes:</b> the seat percentages count districts won by Biden in 2020 and are compared with Biden&rsquo;s share of the two-party presidential vote in the same precincts (the points shown are seat share minus vote share). Zoomed out, each state is shaded by the average dissimilarity of its districts, weighted by population. Zoomed in, precincts are shaded by how far they sit from their district's Democratic share, which is what the district's dissimilarity is built from (population-weighted).</p>
     <p>The <b>average gap per state</b> averages, over the states with two or more districts, how far each state's share of Biden-won seats is from Biden's share of that state's two-party vote, ignoring direction and weighting states by their number of seats. It is a better test of proportionality than the national net figure, because seats can't move between states and opposite-direction errors cancel in the national total.</p>
     <p>Precinct data is from 2020, so it only roughly matches the current district lines. Enacted plans are rebuilt from whole precincts (about 1% off equal population, with a few split precincts reassigned). Winners are by 2020 presidential votes, not House results.</p>
@@ -159,19 +162,22 @@ function apply() {
     map.setPaintProperty('d-fill-' + pl, 'fill-color', districtColor());
     map.setPaintProperty('d-fill-' + pl, 'fill-opacity', districtOpacity());
   });
-  map.setLayoutProperty('p-fill', 'visibility', mode === 'off' ? 'none' : 'visible');
-  map.setPaintProperty('p-fill', 'fill-color', precinctColor());
+  PREC.forEach(n => {
+    map.setLayoutProperty('p-fill-' + n, 'visibility', mode === 'off' ? 'none' : 'visible');
+    map.setPaintProperty('p-fill-' + n, 'fill-color', precinctColor());
+  });
   map.setPaintProperty('s-fill', 'fill-color', stateColor());
   map.setLayoutProperty('s-label', 'text-field', stateLabel());
   renderLegend();
 }
 
+const PREC = [1, 2, 3, 4];   // the precinct tiles are split into four files (by state group) to stay under size limits
 let started = false;
 function init() {
   if (started) return;
   started = true;
   map.addSource('districts', {type: 'vector', url: 'pmtiles://' + abs('data/districts.pmtiles')});
-  map.addSource('precincts', {type: 'vector', url: 'pmtiles://' + abs('data/precincts.pmtiles')});
+  PREC.forEach(n => map.addSource('precincts-' + n, {type: 'vector', url: 'pmtiles://' + abs('data/precincts-' + n + '.pmtiles')}));
   const firstLabel = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
   map.addSource('states', {type: 'geojson', data: abs('data/states.geojson')});
   map.addLayer({id: 's-fill', type: 'fill', source: 'states',
@@ -179,11 +185,13 @@ function init() {
   PLANS.forEach(pl => map.addLayer({id: 'd-fill-' + pl, type: 'fill', source: 'districts', 'source-layer': 'districts', minzoom: ZOOM_STATES,
     filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
     paint: {'fill-color': districtColor(), 'fill-opacity': districtOpacity()}}, firstLabel));
-  map.addLayer({id: 'p-fill', type: 'fill', source: 'precincts', 'source-layer': 'precincts', minzoom: 6,
-    layout: {visibility: mode === 'off' ? 'none' : 'visible'},
-    paint: {'fill-color': precinctColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 0.8]}}, firstLabel);
-  map.addLayer({id: 'p-line', type: 'line', source: 'precincts', 'source-layer': 'precincts', minzoom: 10,
-    paint: {'line-color': '#555', 'line-opacity': 0.25, 'line-width': 0.4}}, firstLabel);
+  PREC.forEach(n => {
+    map.addLayer({id: 'p-fill-' + n, type: 'fill', source: 'precincts-' + n, 'source-layer': 'precincts', minzoom: 6,
+      layout: {visibility: mode === 'off' ? 'none' : 'visible'},
+      paint: {'fill-color': precinctColor(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 0.8]}}, firstLabel);
+    map.addLayer({id: 'p-line-' + n, type: 'line', source: 'precincts-' + n, 'source-layer': 'precincts', minzoom: 10,
+      paint: {'line-color': '#555', 'line-opacity': 0.25, 'line-width': 0.4}}, firstLabel);
+  });
   PLANS.forEach(pl => map.addLayer({id: 'd-line-' + pl, type: 'line', source: 'districts', 'source-layer': 'districts', minzoom: ZOOM_STATES,
     filter: ['==', ['get', 'plan'], pl], layout: {visibility: pl === plan ? 'visible' : 'none'},
     paint: {'line-color': '#111', 'line-opacity': ['interpolate', ['linear'], ['zoom'], ZOOM_STATES, 0, ZOOM_DISTRICTS, 0.9],
@@ -223,7 +231,7 @@ map.on('click', e => {
   }
   if (!map.getLayer('d-fill-' + plan)) return;
   const d = map.queryRenderedFeatures(e.point, {layers: ['d-fill-' + plan]})[0];
-  const p = map.getZoom() >= 7.5 && mode !== 'off' ? map.queryRenderedFeatures(e.point, {layers: ['p-fill']})[0] : null;
+  const p = map.getZoom() >= 7.5 && mode !== 'off' ? map.queryRenderedFeatures(e.point, {layers: PREC.map(n => 'p-fill-' + n)})[0] : null;
   if (!d && !p) return;
   let h = '';
   if (d) {
@@ -233,6 +241,7 @@ map.on('click', e => {
       <tr><td>D share (pop-weighted)</td><td>${a.ds}%</td></tr>
       <tr><td>2020 presidential winner</td><td>${a.winner === 'D' ? 'Biden' : 'Trump'}</td></tr>
       <tr><td>Dissimilarity</td><td>${a.diss}</td></tr>
+      <tr><td>Black / Hispanic, % of voting-age pop.</td><td>${a.bp}% / ${a.hp}%</td></tr>
       <tr><td>Compactness</td><td>${a.comp}</td></tr></table>`;
   }
   if (p) {
@@ -259,19 +268,21 @@ function renderGap() {
   el.innerHTML = `Average gap per state (seat share vs. vote share, ${m.length} states with 2+ districts): ` +
     `<b>${avg('eD').toFixed(1)} pts</b> enacted &middot; <b>${avg('oD').toFixed(1)} pts</b> optimized. Smaller = closer to proportional.`;
 }
-function setScope(name, k, eD, oD, voteD, eDiss, oDiss) {
+function setScope(name, k, eD, oD, voteD, eDiss, oDiss, mmE, mmO) {
   const set = (id, v) => { document.getElementById(id).textContent = v; };
   set('scopeName', name);
   set('s_enc', pct(eD / k)); set('s_enc_d', `${eD} of ${k} seats · ${diffPts(eD / k, voteD)} vs votes`);
   set('s_opt', pct(oD / k)); set('s_opt_d', `${oD} of ${k} seats · ${diffPts(oD / k, voteD)} vs votes`);
   set('voteLine', `Biden's share of the two-party vote: ${pct(voteD)}`);
   set('d_enc', eDiss.toFixed(3)); set('d_opt', oDiss.toFixed(3));
+  document.getElementById('mmLine').innerHTML = (mmE === undefined) ? '' :
+    `Majority-Black or majority-Hispanic districts: <b>${mmE}</b> enacted &middot; <b>${mmO}</b> optimized (floor: at least the enacted count of each).`;
   nationShown = name === 'United States';
   renderGap();
 }
 fetch('data/stats.json').then(r => r.json()).then(s => {
   NATION = s;
-  setScope('United States', s.districts, s.enacted_D, s.opt_D, s.voteD, s.enacted_diss, s.opt_diss);
+  setScope('United States', s.districts, s.enacted_D, s.opt_D, s.voteD, s.enacted_diss, s.opt_diss, s.mm_enacted, s.mm_opt);
 });
 fetch('data/states.json').then(r => r.json()).then(list => {
   STATE_LIST = list;
@@ -286,13 +297,13 @@ fetch('data/states.json').then(r => r.json()).then(list => {
   sel.addEventListener('change', () => {
     const s = list.find(x => x.st === sel.value);
     if (s) {
-      setScope(s.name, s.k, s.eD, s.oD, s.voteD, s.eDiss, s.oDiss);
+      setScope(s.name, s.k, s.eD, s.oD, s.voteD, s.eDiss, s.oDiss, s.eMMB + s.eMMH, s.oMMB + s.oMMH);
       map.fitBounds([[s.bbox[0], s.bbox[1]], [s.bbox[2], s.bbox[3]]], {padding: 40, maxZoom: 9});
     }
   });
 });
 document.getElementById('lower48').addEventListener('click', () => {
-  if (NATION) setScope('United States', NATION.districts, NATION.enacted_D, NATION.opt_D, NATION.voteD, NATION.enacted_diss, NATION.opt_diss);
+  if (NATION) setScope('United States', NATION.districts, NATION.enacted_D, NATION.opt_D, NATION.voteD, NATION.enacted_diss, NATION.opt_diss, NATION.mm_enacted, NATION.mm_opt);
   document.getElementById('state').value = '';
   map.fitBounds([[-125, 24.3], [-66.8, 49.6]], {padding: 20});
 });

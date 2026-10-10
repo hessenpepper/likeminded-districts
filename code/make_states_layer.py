@@ -29,6 +29,9 @@ BBOX_OVERRIDE = {"AK": [-170.0, 51.2, -129.5, 71.6]}   # the Aleutians cross the
 MIN_PART_DEG2 = 0.002                                   # drop specks smaller than ~25 km2
 
 votes = json.loads((HERE / "state_votes.json").read_text())
+# exact majority-minority counts from the tile build (tile_summary.json = tiles\states.json); the rounded district
+# percentages in the tiles can't separate a district at 50.0x% from one at 49.9x%
+mm = {r["st"]: r for r in json.loads((HERE / "tile_summary.json").read_text())}
 full = gpd.read_file(DATA / "districts.pmtiles", layer="districts")                  # attributes: all districts survive here
 print(len(full), "tile pieces read at full detail")
 raw = full.to_crs(4326)      # outlines come from the same full-detail pieces (both plans); reader returns Web Mercator
@@ -43,6 +46,9 @@ for st, g in att.groupby("st"):
         r["k"] = int(len(p))
         r[key + "D"] = int((p.winner == "D").sum())
         r[key + "Diss"] = round(float(np.average(p["diss"].astype(float), weights=p["pop"].astype(float))), 4)
+        src = "enacted" if plan == "enacted" else "opt"
+        r[key + "MMB"] = int(mm[st][f"mm_{src}_black"])               # majority-Black districts (voting-age pop)
+        r[key + "MMH"] = int(mm[st][f"mm_{src}_hisp"])                # majority-Hispanic districts
     D, R = votes[st]
     r["voteD"] = round(D / (D + R), 4)
     r["pop"] = int(att[(att.st == st) & (att.plan == "enacted")]["pop"].sum())
@@ -81,7 +87,8 @@ for _, r in states.iterrows():
     x0, y0, x1, y1 = (BBOX_OVERRIDE.get(r.st) or list(r.geometry.bounds))
     out.append({"st": r.st, "name": r["name"], "k": int(r.k), "bbox": [round(v, 3) for v in (x0, y0, x1, y1)],
                 "voteD": float(r.voteD), "eD": int(r.eD), "oD": int(r.oD),
-                "eDiss": float(r.eDiss), "oDiss": float(r.oDiss)})
+                "eDiss": float(r.eDiss), "oDiss": float(r.oDiss),
+                "eMMB": int(r.eMMB), "eMMH": int(r.eMMH), "oMMB": int(r.oMMB), "oMMH": int(r.oMMH)})
 (DATA / "states.json").write_text(json.dumps(out, separators=(",", ":")))
 
 # national numbers: keep the existing dissimilarity figures, add seat shares and vote share

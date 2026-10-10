@@ -190,8 +190,12 @@ def optimize(ab, meta, a):
     from shapely.strtree import STRtree
 
     gdf = gpd.read_file(STATES / f"{ab}.gpkg")
+    bad = ~gdf.geometry.is_valid
+    if bad.any():      # a few source polygons are self-intersecting; buffer(0) repairs them
+        gdf.loc[bad, "geometry"] = gdf.loc[bad, "geometry"].buffer(0)
+        log(f"repaired {int(bad.sum())} invalid precinct geometries")
     k = meta["k"]
-    graph = Graph.from_geodataframe(gdf, adjacency="queen", cols_to_add=["pop", "D", "R", "enacted"])
+    graph = Graph.from_geodataframe(gdf, adjacency=a.adjacency, cols_to_add=["pop", "D", "R", "enacted"])
     nodes = list(graph.nodes)
     N = len(nodes)
 
@@ -271,7 +275,7 @@ def optimize(ab, meta, a):
     def obj_fn(part):
         return summarize(parts_array(part))["obj"]
 
-    res = {"state": ab, "k": k, "nodes": N, "meta": meta, "bridges": bridges,
+    res = {"state": ab, "k": k, "nodes": N, "meta": meta, "bridges": bridges, "adjacency": a.adjacency,
            "d_share_votes": float(D.sum() / nv.sum()), "d_share_pop": float((w * p).sum() / w.sum())}
     e_parts = np.array([graph.node_data(n)["enacted"] for n in nodes], dtype=np.int64)
     res["enacted"] = summarize(e_parts)
@@ -282,8 +286,8 @@ def optimize(ab, meta, a):
 
     upd = {"population": updaters.Tally("pop", alias="population")}
     BIG = 10 ** 9
-    if a.start == "enacted":
-        # start from the enacted plan. Whole-precinct plans rarely sit well inside +-eps, and ReCom needs slack
+    if a.start in ("enacted", "warm"):
+        # start from the enacted plan (--start warm: a saved plan carried onto new precincts). Whole-precinct plans rarely sit well inside +-eps, and ReCom needs slack
         # to re-split district pairs, so first move boundary precincts from over- to under-populated districts
         # (keeping every district's contiguity no worse than before) until all are within eps/2.
         import networkx as nx
@@ -295,60 +299,90 @@ def optimize(ab, meta, a):
         G.add_edges_from((n, m) for n in nodes for m in nbrs[n] if n < m)
         idx = {n: i for i, n in enumerate(nodes)}
 
-        def balance_repair(assign, target, max_iter=100000):
+        def balance_repair(assign, target, max_iter=200000):
+            """Move boundary precincts from higher- to lower-population neighbors while that lowers the sum of squared
+            deviations (any move of weight x between districts with deviations dA > dB helps iff x < dA - dB), never
+            leaving the source district more fragmented than before."""
             assign = dict(assign)
             members = {}
             for n, d in assign.items():
                 members.setdefault(d, set()).add(n)
             dpop = {d: float(sum(pop[idx[n]] for n in s_)) for d, s_ in members.items()}
+            ncomp = {d: nx.number_connected_components(G.subgraph(s_)) for d, s_ in members.items()}
+            bnd = {n for n in nodes if any(assign[m] != assign[n] for m in nbrs[n])}
             moves = 0
             for _ in range(max_iter):
                 dev = {d: dpop[d] / ideal - 1 for d in dpop}
-                worst = max(dev, key=lambda d: abs(dev[d]))
-                if abs(dev[worst]) <= target:
+                if max(abs(v) for v in dev.values()) <= target:
                     break
                 cands = []
-                if dev[worst] > 0:   # push a boundary precinct out to a less-populated neighbor
-                    for n in members[worst]:
-                        pn = pop[idx[n]]
-                        if pn <= 0:
+                for n in bnd:
+                    x = pop[idx[n]] / ideal
+                    if x <= 0:
+                        continue
+                    A = assign[n]
+                    for B in {assign[m] for m in nbrs[n]}:
+                        if B == A:
                             continue
-                        for e in {assign[m] for m in nbrs[n]}:
-                            if e != worst and dev[e] < dev[worst]:
-                                sc = max(abs(dev[worst] - pn / ideal), abs(dev[e] + pn / ideal))
-                                if sc < abs(dev[worst]) - 1e-12:
-                                    cands.append((sc, n, worst, e))
-                else:                # pull a boundary precinct in from a more-populated neighbor
-                    seen = set()
-                    for n0 in members[worst]:
-                        for m in nbrs[n0]:
-                            e = assign[m]
-                            if e != worst and dev[e] > dev[worst] and m not in seen:
-                                seen.add(m)
-                                pn = pop[idx[m]]
-                                if pn <= 0:
-                                    continue
-                                sc = max(abs(dev[worst] + pn / ideal), abs(dev[e] - pn / ideal))
-                                if sc < abs(dev[worst]) - 1e-12:
-                                    cands.append((sc, m, e, worst))
-                cands.sort()
+                        gain = 2 * x * (dev[A] - dev[B]) - 2 * x * x
+                        if gain > 1e-12:
+                            cands.append((gain, n, A, B))
+                if not cands:
+                    break
+                cands.sort(reverse=True)
                 moved = False
-                for sc, n, src, dst in cands[:40]:
-                    rest = members[src] - {n}
+                for gain, n, A, B in cands[:30]:
+                    rest = members[A] - {n}
                     if not rest:
                         continue
-                    if nx.number_connected_components(G.subgraph(rest)) <=                             nx.number_connected_components(G.subgraph(members[src])):
-                        members[src].remove(n)
-                        members[dst].add(n)
-                        assign[n] = dst
-                        dpop[src] -= pop[idx[n]]
-                        dpop[dst] += pop[idx[n]]
+                    if nx.number_connected_components(G.subgraph(rest)) <= ncomp[A]:
+                        members[A].remove(n)
+                        members[B].add(n)
+                        assign[n] = B
+                        dpop[A] -= pop[idx[n]]
+                        dpop[B] += pop[idx[n]]
+                        ncomp[A] = nx.number_connected_components(G.subgraph(members[A]))
+                        ncomp[B] = nx.number_connected_components(G.subgraph(members[B]))
+                        for q in [n] + nbrs[n]:
+                            if any(assign[m] != assign[q] for m in nbrs[q]):
+                                bnd.add(q)
+                            else:
+                                bnd.discard(q)
                         moves += 1
                         moved = True
                         break
                 if not moved:
                     break
             return assign, moves, max(abs(v / ideal - 1) for v in dpop.values())
+
+        def bridge_fragments(assign):
+            """Connect each district's separated pieces to its largest piece by the nearest pair of precincts (adds
+            graph edges). Used for the enacted plan, whose districts legitimately cross water or other gaps."""
+            from shapely.strtree import STRtree
+            members = {}
+            for n, d in assign.items():
+                members.setdefault(d, set()).add(n)
+            added = 0
+            for d, s_ in members.items():
+                comps = sorted(nx.connected_components(G.subgraph(s_)), key=len, reverse=True)
+                main = set(comps[0])
+                for comp in comps[1:]:
+                    main_nodes = list(main)
+                    tree = STRtree([geoms[n] for n in main_nodes])
+                    best = None
+                    for n in comp:
+                        i = int(tree.nearest(geoms[n]))
+                        dist = geoms[n].distance(geoms[main_nodes[i]])
+                        if best is None or dist < best[0]:
+                            best = (dist, n, main_nodes[i])
+                    _, u, v = best
+                    graph.add_edge(u, v)
+                    G.add_edge(u, v)
+                    nbrs[u].append(v)
+                    nbrs[v].append(u)
+                    main |= comp
+                    added += 1
+            return added
 
         def fix_contiguity(assign):
             """Whole-precinct enacted plans can have stray pieces (a precinct goes to the district holding most of
@@ -380,21 +414,41 @@ def optimize(ab, meta, a):
                     break
             return assign, fixed_nodes, fixed_pop
 
-        assign = {n: int(graph.node_data(n)["enacted"]) for n in nodes}
+        if a.start == "warm":
+            with open(a.warm_file, "rb") as fh:
+                saved = pickle.load(fh)
+            assign = {n: int(saved[n]) for n in nodes}
+            raw = summarize(np.array([assign[n] for n in nodes], dtype=np.int64))
+            res["warm_raw_obj"], res["warm_raw_max_pop_dev"] = raw["obj"], raw["max_pop_dev"]
+            log(f"carried plan before repair: obj {raw['obj']:.4f}, max population deviation {raw['max_pop_dev']*100:.2f}%")
+            if a.bridge_warm:       # continuing a saved plan whose districts use water crossings / gaps (bridge edges)
+                nb = bridge_fragments(assign)
+                if nb:
+                    log(f"added {nb} bridge edges so the carried plan's districts are connected")
+                    res["district_bridges"] = nb
+        else:
+            assign = {n: int(graph.node_data(n)["enacted"]) for n in nodes}
+            nb = bridge_fragments(assign)
+            if nb:
+                log(f"added {nb} bridge edges so the enacted districts are connected (water crossings and gaps)")
+                res["district_bridges"] = nb
         assign, fixed_nodes, fixed_pop = fix_contiguity(assign)
         if fixed_nodes:
             log(f"contiguity: reattached {fixed_nodes} stray precincts ({fixed_pop:,.0f} people) to neighboring districts")
         dev0 = res["enacted"]["max_pop_dev"]
         assign, moves, devr = balance_repair(assign, a.eps * 0.5)
-        if devr > a.eps * 0.9:
-            raise RuntimeError(f"could not rebalance the enacted plan below {a.eps*0.9:.4f} (got {devr:.4f})")
+        if devr > a.eps:
+            if devr > 0.05:
+                raise RuntimeError(f"could not rebalance the start plan below 5% (got {devr:.4f})")
+            eps_used = float(devr * 1.02)
+            log(f"population tolerance for this state loosened to +-{eps_used*100:.2f}% (the start plan reached {devr*100:.2f}%)")
         start = Partition(graph, assignment=assign, updaters=upd)
-        res.update({"eps_used": eps_used, "start": "enacted", "rebalance_moves": moves,
+        res.update({"eps_used": eps_used, "start": a.start, "rebalance_moves": moves,
                     "contiguity_fixed_nodes": fixed_nodes, "contiguity_fixed_pop": fixed_pop,
                     "start_max_dev_before": dev0, "start_max_dev_after": devr,
                     "start_seconds": round(time.time() - t0, 1)})
         log(f"rebalanced enacted plan: max deviation {dev0*100:.2f}% -> {devr*100:.2f}% with {moves} precinct moves")
-        log(f"start plan (enacted, rebalanced) obj {obj_fn(start):.4f} vs enacted {res['enacted']['obj']:.4f}")
+        log(f"start plan ({a.start}, rebalanced) obj {obj_fn(start):.4f} vs enacted {res['enacted']['obj']:.4f}")
         proposal = ReCom.district_pairs_mst(pop_col="pop", pop_target=ideal, epsilon=eps_used)
         cons = [constraints.within_percent_of_ideal_population(start, eps_used, pop_key="population")]
         res["ensemble"], res["ensemble_steps"], res["ensemble_seconds"] = [], 0, 0.0
@@ -455,6 +509,85 @@ def optimize(ab, meta, a):
             f"range {seats.min()}-{seats.max()} ({res['ensemble_seconds']:.0f}s)")
 
 
+    res["start_obj"] = float(obj_fn(last))
+    vra_info = None
+    if a.vra:
+        if a.start == "random":
+            raise RuntimeError("--vra needs --start enacted or --start best (a random plan cannot meet the VRA floor)")
+        race = pd.read_csv(Path(a.race_dir) / f"{ab}.csv").set_index("node").reindex(nodes).fillna(0)
+        bv, hv, vv = (race[c].to_numpy(float) for c in ("bvap", "hvap", "vap"))
+
+        def vra_counts(parts):
+            """(# majority-Black, # majority-Hispanic) districts, by share of voting-age population."""
+            K = int(parts.max()) + 1
+            V, B, H = (np.bincount(parts, x, K) for x in (vv, bv, hv))
+            live = V > 0
+            return int((B[live] / V[live] > 0.5).sum()), int((H[live] / V[live] > 0.5).sum())
+
+        need_b, need_h = vra_counts(e_parts)                    # the enacted plan's own counts
+        s_b, s_h = vra_counts(parts_array(last))                # the starting plan's counts
+        relaxed = s_b < need_b or s_h < need_h
+        if relaxed and a.restore_floor:
+            def deficit(parts):
+                """How far the (need)th most-minority districts are from a 50% majority, summed over both groups."""
+                K = int(parts.max()) + 1
+                V, B, H = (np.bincount(parts, x, K) for x in (vv, bv, hv))
+                live = V > 0
+                tot = 0.0
+                for X, need in ((B, need_b), (H, need_h)):
+                    if need > 0:
+                        sh = np.sort(X[live] / V[live])[::-1][:need]
+                        tot += float(np.clip(0.5001 - sh, 0, None).sum())
+                return tot
+
+            log(f"VRA: starting plan has {s_b} Black / {s_h} Hispanic majority districts, fewer than the enacted "
+                f"{need_b} / {need_h}; restoring the floor first (up to {a.restore_min:.0f} min)")
+            t_r = time.time()
+            r_score = lambda part: 100.0 * deficit(parts_array(part)) + float(obj_fn(part))
+            r_best, r_best_score, r_cur, r_steps, r_retries, got = last, r_score(last), last, 0, 0, None
+            while got is None and time.time() - t_r < a.restore_min * 60 and r_retries <= 10:
+                r_opt = SingleMetricOptimizer(proposal, cons, r_cur, r_score, maximize=False,
+                                              rng=a.seed + 7 + 1000 * r_retries)
+                try:
+                    for part in r_opt.short_bursts(a.burst_len, BIG):
+                        r_steps += 1
+                        c = vra_counts(parts_array(part))
+                        if c[0] >= need_b and c[1] >= need_h:
+                            got = part
+                            break
+                        if r_steps % 200 == 0:
+                            if r_opt.best_score is not None and float(r_opt.best_score) < r_best_score:
+                                r_best, r_best_score = r_opt.best_part, float(r_opt.best_score)
+                            if time.time() - t_r > a.restore_min * 60:
+                                break
+                except RuntimeError as e:
+                    if r_opt.best_score is not None and float(r_opt.best_score) < r_best_score:
+                        r_best, r_best_score = r_opt.best_part, float(r_opt.best_score)
+                    r_retries += 1
+                    r_cur = r_best
+                    log(f"  restore: ReCom failure ({str(e)[:60]}); restart #{r_retries}")
+            res["restore_floor"] = {"before": [s_b, s_h], "needed": [need_b, need_h], "steps": r_steps,
+                                    "minutes": round((time.time() - t_r) / 60, 1), "ok": got is not None}
+            if got is not None:
+                last = got
+                res["start_obj_before_restore"] = res["start_obj"]
+                res["start_obj"] = float(obj_fn(last))
+                s_b, s_h = vra_counts(parts_array(last))
+                relaxed = False
+                log(f"VRA: floor restored after {r_steps:,} steps ({res['restore_floor']['minutes']} min): "
+                    f"{s_b} Black / {s_h} Hispanic; obj {res['start_obj_before_restore']:.4f} -> {res['start_obj']:.4f}")
+            else:
+                log(f"VRA: could not restore the floor in {a.restore_min:.0f} min; falling back to the start's counts")
+        if relaxed:
+            log(f"VRA: starting plan has {s_b} Black / {s_h} Hispanic majority districts, fewer than the enacted "
+                f"{need_b} / {need_h}; floor lowered to the start's counts")
+            need_b, need_h = min(need_b, s_b), min(need_h, s_h)
+        cons = list(cons) + [lambda part: all(c >= n for c, n in zip(vra_counts(parts_array(part)), (need_b, need_h)))]
+        vra_info = {"enacted": list(vra_counts(e_parts)), "start": [s_b, s_h], "floor": [need_b, need_h],
+                    "relaxed": bool(relaxed)}
+        log(f"VRA floor: at least {need_b} majority-Black and {need_h} majority-Hispanic districts "
+            f"(enacted {vra_info['enacted']}, start {vra_info['start']})")
+
     # ---- optimizer: time-boxed, or in rounds until a round gains < min_gain, or until a stall ----
     t0 = time.time()
     trace, nsteps, rounds, retries, stop_reason = [], 0, [], 0, "unknown"
@@ -504,6 +637,10 @@ def optimize(ab, meta, a):
                 raise
             cur_start = best
     res["opt_retries"] = retries
+    if vra_info:
+        vra_info["optimized"] = list(vra_counts(parts_array(best)))
+        res["vra"] = vra_info
+        log(f"VRA: optimized plan has {vra_info['optimized'][0]} Black / {vra_info['optimized'][1]} Hispanic majority districts")
     res["stop_reason"] = stop_reason
     log(f"stopped: {stop_reason} after {nsteps:,} steps, {(time.time()-t0)/60:.0f} min; best {best_score:.4f}")
     res["optimized"] = summarize(parts_array(best))
@@ -529,8 +666,19 @@ if __name__ == "__main__":
     ap.add_argument("--opt-min", type=float, default=20.0)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--keep-raw", action="store_true")
-    ap.add_argument("--start", default="random", choices=["random", "enacted", "best"])
+    ap.add_argument("--start", default="random", choices=["random", "enacted", "best", "warm"])
     ap.add_argument("--warm-file", default="", help="with --start best: pickle of {precinct: district}")
+    ap.add_argument("--adjacency", default="rook", choices=["rook", "queen"],
+                    help="rook = districts must connect through shared boundary, not just a corner")
+    ap.add_argument("--vra", action="store_true", help="keep at least the enacted count of majority-Black and majority-Hispanic districts")
+    ap.add_argument("--bridge-warm", action="store_true",
+                    help="with --start warm: connect the saved plan's separated pieces with nearest-pair bridge edges "
+                         "instead of reassigning them (use to continue a plan that already relies on such bridges)")
+    ap.add_argument("--restore-floor", action="store_true",
+                    help="with --vra: if the start plan has fewer majority-minority districts than the enacted plan, "
+                         "first optimize toward restoring them (instead of lowering the floor)")
+    ap.add_argument("--restore-min", type=float, default=40.0, help="time cap for --restore-floor, minutes")
+    ap.add_argument("--race-dir", default=r"C:\gerry-compute\race", help="folder with <st>.csv from add_race.py")
     ap.add_argument("--stall-steps", type=int, default=0, help="stall window in steps (0 = off)")
     ap.add_argument("--stall-gain", type=float, default=0.001, help="stall if best improved by less than this")
     ap.add_argument("--min-steps", type=int, default=0, help="never declare a stall before this many steps")

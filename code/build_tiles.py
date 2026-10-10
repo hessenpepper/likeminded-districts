@@ -19,8 +19,7 @@ from shapely.geometry import MultiPolygon, Polygon
 
 BASE = Path(r"C:\gerry-compute")
 STATE_DIRS = [BASE / "states", BASE / "laptop-data" / "states"]
-RESULT_DIRS = [BASE / "out", BASE / "out_laptop", BASE / "seedcheck" / "out", BASE / "seedcheck_enacted" / "out",
-               BASE / "overnight" / "out"]
+RESULT_DIRS = [BASE / "vra" / "out"]       # rook-contiguous plans optimized under the VRA floor (majority-minority count)
 ALL = ("al ak az ar ca co ct de fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok "
        "or pa ri sc sd tn tx ut vt va wa wv wi wy").split()
 states = [s.lower() for s in sys.argv[1:]] or ALL
@@ -39,16 +38,30 @@ def find_gpkg(ab):
     raise FileNotFoundError(ab)
 
 
-def best_candidate(ab):
+def mm_counts(parts, vv, bv, hv):
+    """(# majority-Black, # majority-Hispanic) districts by voting-age population."""
+    parts = np.asarray(parts, dtype=np.int64)
+    K = int(parts.max()) + 1
+    V, B, H = (np.bincount(parts, x, K) for x in (vv, bv, hv))
+    live = V > 0
+    return int((B[live] / V[live] > 0.5).sum()), int((H[live] / V[live] > 0.5).sum())
+
+
+def best_candidate(ab, index, need, vv, bv, hv):
+    """Lowest-dissimilarity saved plan that keeps at least the enacted count of majority-Black and majority-Hispanic
+    districts. Returns None when no saved plan qualifies (the site then shows the enacted plan as the optimized one)."""
     cands = []
     for d in RESULT_DIRS:
-        for f in glob.glob(str(d / f"{ab}.json")) + glob.glob(str(d / f"{ab}_*.json")):
+        for f in glob.glob(str(d / f"{ab}_*.json")):
             f = Path(f)
             pk = f.with_name(f.stem + "_best.pkl")
             if pk.exists():
                 r = json.loads(f.read_text())
                 if "optimized" in r:
-                    cands.append((r["optimized"]["obj"], f, pk, r["enacted"]["obj"]))
+                    plan = pd.Series(pickle.load(open(pk, "rb"))).reindex(index).astype(int).to_numpy()
+                    nb, nh = mm_counts(plan, vv, bv, hv)
+                    if nb >= need[0] and nh >= need[1]:
+                        cands.append((r["optimized"]["obj"], f, pk, r["enacted"]["obj"], (nb, nh)))
     return min(cands, key=lambda c: c[0]) if cands else None
 
 
@@ -64,7 +77,7 @@ def plan_table(g, col):
     w = np.where(ok, g["pop"], 0.0)
     p = np.where(ok, g.D / (g.D + g.R).where(ok, 1), 0.0)
     g = g.assign(_w=w, _p=p)
-    dis = g.dissolve(by=col, aggfunc={"pop": "sum", "D": "sum", "R": "sum"})
+    dis = g.dissolve(by=col, aggfunc={"pop": "sum", "D": "sum", "R": "sum", "vap": "sum", "bvap": "sum", "hvap": "sum"})
     rows = []
     for d, s in g.groupby(col):
         W = s["_w"].sum()
@@ -83,16 +96,21 @@ prec_parts, dist_parts, summary = [], [], []
 for ab in states:
     t0 = time.time()
     g = gpd.read_file(find_gpkg(ab)).set_index("node", drop=False)
+    race = pd.read_csv(BASE / "race" / f"{ab}.csv").set_index("node").reindex(g.index).fillna(0)
+    for c in ("vap", "bvap", "hvap"):
+        g[c] = race[c].to_numpy(float)
     miss = g["enacted"].isna()
     if miss.any():
         near = gpd.sjoin_nearest(g.loc[miss, ["geometry"]], g.loc[~miss, ["enacted", "geometry"]], how="left")
         g.loc[miss, "enacted"] = near[~near.index.duplicated()]["enacted"]
     g["enacted"] = g["enacted"].astype(int)
-    cand = best_candidate(ab)
+    vv, bv, hv = (g[c].to_numpy() for c in ("vap", "bvap", "hvap"))
+    need = mm_counts(g["enacted"].to_numpy(), vv, bv, hv)
+    cand = best_candidate(ab, g.index, need, vv, bv, hv)
     if cand is None:
-        g["best"], eobj, oobj = g["enacted"], np.nan, np.nan
+        g["best"], eobj, oobj, got = g["enacted"], np.nan, np.nan, need
     else:
-        oobj, _, pk, eobj = cand
+        oobj, _, pk, eobj, got = cand
         g["best"] = pd.Series(pickle.load(open(pk, "rb"))).reindex(g.index).astype(int)
     enc, opt = plan_table(g, "enacted"), plan_table(g, "best")
     opt_label = {d: i + 1 for i, d in enumerate(sorted(opt.plan_district))}
@@ -116,11 +134,14 @@ for ab in states:
         d["ds"] = (d["d_share"] * 100).round(1)
         d["diss"] = d["diss"].round(3)
         d["comp"] = d["comp"].round(3)
-        dist_parts.append(gpd.GeoDataFrame(d[["plan", "st", "lab", "pop", "ds", "diss", "comp", "winner", "geometry"]],
+        d["bp"] = (100 * d["bvap"] / d["vap"].where(d["vap"] > 0, 1)).round(1)     # Black alone, % of voting-age pop
+        d["hp"] = (100 * d["hvap"] / d["vap"].where(d["vap"] > 0, 1)).round(1)     # Hispanic, % of voting-age pop
+        dist_parts.append(gpd.GeoDataFrame(d[["plan", "st", "lab", "pop", "ds", "diss", "comp", "bp", "hp", "winner", "geometry"]],
                                            geometry="geometry", crs=5070).to_crs(4326))
     summary.append({"st": ab.upper(), "k": len(opt), "enacted_diss": eobj, "opt_diss": oobj,
                     "enacted_D": int((enc.winner == "D").sum()), "opt_D": int((opt.winner == "D").sum()),
-                    "pop": int(g["pop"].sum())})
+                    "mm_enacted_black": need[0], "mm_enacted_hisp": need[1], "mm_opt_black": int(got[0]),
+                    "mm_opt_hisp": int(got[1]), "vra_ok": bool(got[0] >= need[0] and got[1] >= need[1]), "pop": int(g["pop"].sum())})
     log(f"{ab.upper()}: {len(g):,} precincts, {len(opt)} districts ({time.time()-t0:.0f}s)")
 
 precincts = pd.concat(prec_parts, ignore_index=True)
@@ -131,17 +152,36 @@ multi = sm[sm.k > 1]
 stats = {"districts": int(sm.k.sum()), "enacted_D": int(sm.enacted_D.sum()), "opt_D": int(sm.opt_D.sum()),
          "enacted_diss": float(np.average(multi.enacted_diss, weights=multi.k)),
          "opt_diss": float(np.average(multi.opt_diss, weights=multi.k)), "states": len(sm),
+         "mm_enacted": int(sm.mm_enacted_black.sum() + sm.mm_enacted_hisp.sum()),
+         "mm_opt": int(sm.mm_opt_black.sum() + sm.mm_opt_hisp.sum()),
+         "vra_ok_states": int(sm.vra_ok.sum()),
          "built": time.strftime("%Y-%m-%d")}
 (OUT / "stats.json").write_text(json.dumps(stats))
 log("stats", json.dumps(stats))
 (OUT / "states.json").write_text(sm.assign(enacted_diss=sm.enacted_diss.round(4), opt_diss=sm.opt_diss.round(4))
                                  .to_json(orient="records"))
 
-for name, df, layer, lo, hi in (("districts", districts, "districts", 0, 9), ("precincts", precincts, "precincts", 6, 11)):
-    path = OUT / f"{name}.pmtiles"
+def write_tiles(path, df, layer, lo, hi):
+    path = Path(path)
     if path.exists():
         path.unlink()
     t0 = time.time()
     pyogrio.write_dataframe(df, str(path), driver="PMTiles", layer=layer, MINZOOM=lo, MAXZOOM=hi,
                             MAX_SIZE=1000000, MAX_FEATURES=200000)
     log(f"wrote {path} ({path.stat().st_size / 1e6:.1f} MB, {len(df):,} features, zoom {lo}-{hi}) in {time.time()-t0:.0f}s")
+
+
+write_tiles(OUT / "districts.pmtiles", districts, "districts", 0, 9)
+
+# precincts: split by state into N_FILES files of roughly equal feature count (largest states first, greedy)
+N_FILES = 4
+counts = precincts.groupby("st").size().sort_values(ascending=False)
+bins = [[] for _ in range(N_FILES)]
+load = [0] * N_FILES
+for st, n in counts.items():
+    i = int(np.argmin(load))
+    bins[i].append(st)
+    load[i] += int(n)
+for i, group in enumerate(bins, 1):
+    write_tiles(OUT / f"precincts-{i}.pmtiles", precincts[precincts.st.isin(group)], "precincts", 6, 11)
+(OUT / "precincts.json").write_text(json.dumps({str(i): g for i, g in enumerate(bins, 1)}))

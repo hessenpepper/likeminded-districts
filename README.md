@@ -23,15 +23,22 @@ precincts that lean very differently. A state's score is the population-weighted
 * Units: 2020 VEST precincts (175k+ nationwide), joined to 2020 census block populations (PL 94-171).
 * Search: [GerryChain](https://github.com/mggg/GerryChain) ReCom Markov chain with a short-burst optimizer, keeping every
   district contiguous and within ±0.5% of equal population, minimizing the dissimilarity above.
-* The map shows the lowest-dissimilarity plan found for each state across several runs (random starts, different seeds,
-  and starts from the enacted map). Searches were time-boxed or stopped on a stall rule, so a longer search could do a bit
-  better; seed-to-seed spread in testing was about 1.5% of the score.
-* "Neutral" comparison ensembles (population + contiguity only) were also run per state and are discussed in the project
-  notes, not shown on the map.
+* **Contiguity is rook:** a district must be connected across shared boundaries, not only at a corner. Islands and
+  other water crossings that the enacted map itself uses are connected by nearest-pair links.
+* **Voting Rights Act floor:** every optimized plan keeps at least as many majority-Black and as many majority-Hispanic
+  districts (more than 50% of voting-age population, 2020 census) as the enacted plan in that state. The rule is a hard
+  constraint inside the search, so plans that fall below it are never accepted. All 50 states meet it (46 enacted
+  majority-minority districts, 50 optimized). This is a count-based check, not a legal VRA analysis: it does not test
+  whether minority voters can elect candidates of their choice or racially polarized voting.
+* The optimized plans start from the enacted map (or from the best earlier plan) and are then optimized. Searches are
+  time-boxed (90 minutes per state) or stopped on a stall rule (less than 0.1% gain over 20,000 steps). About a third of
+  the states hit the time cap while still improving slowly, so longer runs could do a bit better; seed-to-seed spread in
+  testing was about 1.5% of the score.
 
 ## Caveats, please read
 
-* **Not proposals and not legal maps.** The optimized plans ignore the Voting Rights Act, county and city boundaries,
+* **Not proposals and not legal maps.** The optimized plans keep the enacted number of majority-Black and
+  majority-Hispanic districts but are not a Voting Rights Act analysis, and they ignore county and city boundaries,
   communities of interest and compactness rules. District numbers in optimized plans are arbitrary.
 * **Enacted plans are approximations.** The "enacted" layer is the 2024-era 119th-Congress map rebuilt from whole 2020
   precincts (each precinct goes to the district holding most of its residents), so district populations are roughly
@@ -57,9 +64,11 @@ precincts that lean very differently. A state's score is the population-weighted
   Districts can be shaded by Democratic share or by dissimilarity (one fixed scale for all states: 0.10 to 0.50+).
   Zoomed out, each state is shaded and labeled by the average dissimilarity of its districts (population-weighted, same scale);
   the side panel shows seat shares as percentages next to Biden's share of the two-party vote, nationally or for a chosen state.
-* `data/districts.pmtiles`, `data/precincts.pmtiles`: vector tiles. `data/states.geojson` (state outlines with seat counts, dissimilarity and vote share), `data/states.json`, `data/stats.json`: the state list and headline numbers.
-* `code/`: the scripts that produced the results (`pipeline.py` per-state download and optimization, `driver*.py` batch
-  runners, `build_tiles.py` tile builder, `state_votes.py` / `make_states_layer.py` state-level numbers, `aggregate.py` cross-state comparison).
+* `data/states.geojson` (state outlines with seat counts, dissimilarity and vote share), `data/states.json`, `data/stats.json`: the state list and headline numbers.
+* `data/districts.pmtiles`, `data/precincts-1..4.pmtiles`: the precinct tiles are split into four files by state group.
+* `code/`: the scripts that produced the results (`pipeline.py` per-state download and optimization with rook contiguity,
+  the VRA floor and warm starts; `driver*.py` and `rook_orchestrator.py` batch runners; `build_tiles.py` tile builder;
+  `state_votes.py` / `make_states_layer.py` state-level numbers; `aggregate.py` cross-state comparison).
 
 ## License
 
