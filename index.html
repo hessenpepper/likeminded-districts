@@ -63,7 +63,7 @@ a{color:var(--accent)}
   </fieldset>
   <fieldset><legend>Shading</legend>
     <label><input type="radio" name="dshade" value="diss" checked> Dissimilarity (white to brown)</label>
-    <label><input type="radio" name="dshade" value="share"> D share (red to blue)</label>
+    <label><input type="radio" name="dshade" value="share"> Party share (red to blue)</label>
     <label style="margin-top:6px"><input type="checkbox" id="showPrec" checked> Show precincts (zoom in)</label>
   </fieldset>
   <div id="legend"></div>
@@ -110,8 +110,13 @@ const districtOpacity = () => mode === 'off'
   ? ['interpolate', ['linear'], ['zoom'], ZOOM_STATES, 0, ZOOM_DISTRICTS, 0.7, 14, 0.7]
   : ['interpolate', ['linear'], ['zoom'], ZOOM_STATES, 0, ZOOM_DISTRICTS, 0.65, 8, 0.25, 10, 0.0];
 const stateProp = () => plan === 'enacted' ? 'eDiss' : 'oDiss';
-const stateColor = () => ['interpolate', ['linear'], ['get', stateProp()], 0.10, DISS[0], 0.23, DISS[1], 0.36, DISS[2], 0.50, DISS[3]];
-const stateLabel = () => ['format', ['get', 'st'], {}, '\n', {}, ['number-format', ['get', stateProp()], {'min-fraction-digits': 3, 'max-fraction-digits': 3}], {'font-scale': 0.85}];
+// zoomed out: whole-state shading follows the same choice as the districts (dissimilarity or party share)
+const stateColor = () => dshade === 'share'
+  ? ['interpolate', ['linear'], ['get', 'voteD'], 0.20, SHARE[0], 0.50, SHARE[1], 0.80, SHARE[2]]
+  : ['interpolate', ['linear'], ['get', stateProp()], 0.10, DISS[0], 0.23, DISS[1], 0.36, DISS[2], 0.50, DISS[3]];
+const stateLabel = () => dshade === 'share'
+  ? ['format', ['get', 'st'], {}, '\n', {}, ['number-format', ['*', ['get', 'voteD'], 100], {'min-fraction-digits': 1, 'max-fraction-digits': 1}], {'font-scale': 0.85}, '%', {'font-scale': 0.85}]
+  : ['format', ['get', 'st'], {}, '\n', {}, ['number-format', ['get', stateProp()], {'min-fraction-digits': 3, 'max-fraction-digits': 3}], {'font-scale': 0.85}];
 const ZOOM_STATES = 5.4;   // zoomed out past this, show whole-state dissimilarity; zoomed in, show districts
 const ZOOM_DISTRICTS = 6.0;   // by here the state shading has faded out completely
 const precinctDev = () => plan === 'enacted' ? 'ed' : 'od';
@@ -130,12 +135,12 @@ function precinctColor() {
 function renderLegend() {
   const dist = dshade === 'diss'
     ? {t: 'District dissimilarity', g: DISS, lo: '0.10 (precincts alike)', hi: '0.50+ (precincts differ)'}
-    : {t: 'District D share', g: SHARE, lo: '20% D', hi: '80% D'};
+    : {t: 'District party share', g: SHARE, lo: '20% Democratic', hi: '80% Democratic'};
   const prec = mode === 'absdev'
     ? {t: 'Precinct dissimilarity', g: DISS, lo: '0 pts (like its district)', hi: '35+ pts away'}
     : mode === 'dev'
-      ? {t: 'Precinct vs. its district', g: SHARE, lo: '−40 pts (less D than district)', hi: '+40 pts (more D)'}
-      : {t: 'Precinct D share', g: SHARE, lo: '10% D', hi: '90% D'};
+      ? {t: 'Precinct vs. its district', g: SHARE, lo: '−40 pts (less Democratic)', hi: '+40 pts (more Democratic)'}
+      : {t: 'Precinct party share', g: SHARE, lo: '10% Democratic', hi: '90% Democratic'};
   const bar = g => `<div class="bar" style="background:linear-gradient(90deg,${g.join(',')})"></div>`;
   document.getElementById('legend').innerHTML =
     `<div class="scale"><b>${dist.t}</b></div>${bar(dist.g)}
@@ -143,9 +148,13 @@ function renderLegend() {
      ${mode === 'off' ? '' : `<div class="scale" style="margin-top:6px"><b>${prec.t} (zoom in)</b></div>${bar(prec.g)}
      <div class="scale"><span>${prec.lo}</span><span>${prec.hi}</span></div>`}
      <div id="legS" style="display:${map.getZoom() < ZOOM_STATES ? 'block' : 'none'}">
-       <div class="scale" style="margin-top:6px"><b>Zoomed out: state dissimilarity</b></div>${bar(DISS)}
+       ${dshade === 'share'
+         ? `<div class="scale" style="margin-top:6px"><b>Zoomed out: state party share</b></div>${bar(SHARE)}
+       <div class="scale"><span>20% Democratic</span><span>80% Democratic</span></div>
+       <div class="scale"><span>two-party presidential vote, whole state</span></div>`
+         : `<div class="scale" style="margin-top:6px"><b>Zoomed out: state dissimilarity</b></div>${bar(DISS)}
        <div class="scale"><span>0.10</span><span>0.50+</span></div>
-       <div class="scale"><span>average of the state&rsquo;s districts, ${plan}</span></div></div>`;
+       <div class="scale"><span>average of the state&rsquo;s districts, ${plan}</span></div>`}</div>`;
 }
 const PLANS = ['optimized', 'enacted'];
 function apply() {
@@ -235,7 +244,7 @@ map.on('click', e => {
     const a = d.properties;
     h += `<h3>${a.st}-${a.lab} <span style="font-weight:400;color:var(--muted)">(${a.plan}${a.plan === 'optimized' ? ', number arbitrary' : ''})</span></h3>
       <table><tr><td>Population</td><td>${fmt(a.pop)}</td></tr>
-      <tr><td>D share (pop-weighted)</td><td>${a.ds}%</td></tr>
+      <tr><td>Party share (Democratic, pop-weighted)</td><td>${a.ds}%</td></tr>
       <tr><td>2020 presidential winner</td><td>${a.winner === 'D' ? 'Biden' : 'Trump'}</td></tr>
       <tr><td>Dissimilarity</td><td>${a.diss}</td></tr>
       <tr><td>Black / Hispanic, % of voting-age pop.</td><td>${a.bp}% / ${a.hp}%</td></tr>
@@ -245,8 +254,8 @@ map.on('click', e => {
     const q = p.properties, dev = plan === 'enacted' ? q.ed : q.od;
     h += `<h3 style="margin-top:8px">Precinct</h3><table>
       <tr><td>Population</td><td>${fmt(q.pop)}</td></tr>
-      <tr><td>D share</td><td>${q.p < 0 ? 'no votes' : q.p + '%'}</td></tr>
-      <tr><td>vs. district's D share</td><td>${q.p < 0 ? '–' : (dev > 0 ? '+' : '') + dev + ' pts'}</td></tr></table>`;
+      <tr><td>Party share (Democratic)</td><td>${q.p < 0 ? 'no votes' : q.p + '%'}</td></tr>
+      <tr><td>vs. district's party share</td><td>${q.p < 0 ? '–' : (dev > 0 ? '+' : '') + dev + ' pts'}</td></tr></table>`;
   }
   new maplibregl.Popup({maxWidth: '280px'}).setLngLat(e.lngLat).setHTML(h).addTo(map);
 });
