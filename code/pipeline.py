@@ -190,12 +190,46 @@ def optimize(ab, meta, a):
     from shapely.strtree import STRtree
 
     gdf = gpd.read_file(STATES / f"{ab}.gpkg")
+    import shapely
+    from shapely.geometry import box as _box
+    nullg = gdf.geometry.isna() | gdf.geometry.is_empty
+    if nullg.any():     # a precinct with no usable outline (no residents mapped): park a 1 m square at the state's edge
+        x0, y0, x1, y1 = gdf.geometry[~nullg].total_bounds
+        gdf.loc[nullg, "geometry"] = [_box(x0, y0, x0 + 1, y0 + 1)] * int(nullg.sum())
+        log(f"{int(nullg.sum())} precinct(s) without geometry given a placeholder outline")
     bad = ~gdf.geometry.is_valid
-    if bad.any():      # a few source polygons are self-intersecting; buffer(0) repairs them
-        gdf.loc[bad, "geometry"] = gdf.loc[bad, "geometry"].buffer(0)
+    if bad.any():      # self-intersecting source polygons: make_valid, keep the polygonal part
+        fixed = []
+        for geom in gdf.geometry[bad]:
+            m = shapely.make_valid(geom)
+            if m.geom_type not in ("Polygon", "MultiPolygon"):
+                parts = [p for p in shapely.get_parts(m) if p.geom_type in ("Polygon", "MultiPolygon")]
+                m = shapely.union_all(parts) if parts else geom.buffer(0)
+            fixed.append(m)
+        gdf.loc[bad, "geometry"] = fixed
         log(f"repaired {int(bad.sum())} invalid precinct geometries")
     k = meta["k"]
     graph = Graph.from_geodataframe(gdf, adjacency=a.adjacency, cols_to_add=["pop", "D", "R", "enacted"])
+    if a.land_only:
+        # Water polygons (zero residents, mostly outside the Census shoreline) must not connect land: cut their edges
+        # down to one, so they hang off the graph as leaves and a district can't use open water as a corridor.
+        import shapely
+        shore = gpd.read_file(a.shoreline).set_index("STUSPS").to_crs(gdf.crs).loc[ab.upper(), "geometry"]
+        zero = np.where(gdf["pop"].to_numpy() == 0)[0]
+        water = set()
+        if len(zero):
+            gz = gdf.geometry.to_numpy()[zero]
+            frac = shapely.area(shapely.intersection(gz, shore)) / np.maximum(shapely.area(gz), 1.0)
+            water = {int(zero[i]) for i in np.where(frac < 0.5)[0]}
+        cut = 0
+        for w_ in water:
+            nb_ = list(graph.neighbors(w_))
+            keep = next((m for m in nb_ if m not in water), None)
+            for m in nb_:
+                if m != keep:
+                    graph.remove_edge(w_, m)
+                    cut += 1
+        log(f"land-only adjacency: {len(water)} water precincts made leaves ({cut} edges removed)")
     nodes = list(graph.nodes)
     N = len(nodes)
 
@@ -674,6 +708,11 @@ if __name__ == "__main__":
     ap.add_argument("--bridge-warm", action="store_true",
                     help="with --start warm: connect the saved plan's separated pieces with nearest-pair bridge edges "
                          "instead of reassigning them (use to continue a plan that already relies on such bridges)")
+    ap.add_argument("--land-only", action="store_true",
+                    help="water precincts (no residents, mostly off the shoreline) cannot connect land: districts "
+                         "must be contiguous over populated precincts, except across the sanctioned island bridges")
+    ap.add_argument("--shoreline", default=r"C:\gerry-compute\shoreline\cb_2024_us_state_500k.shp",
+                    help="Census cartographic state boundaries (shoreline-clipped), used by --land-only")
     ap.add_argument("--restore-floor", action="store_true",
                     help="with --vra: if the start plan has fewer majority-minority districts than the enacted plan, "
                          "first optimize toward restoring them (instead of lowering the floor)")

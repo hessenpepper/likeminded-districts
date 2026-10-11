@@ -92,6 +92,38 @@ def plan_table(g, col):
     return dis.reset_index().rename(columns={col: "plan_district"})
 
 
+# Census cartographic state boundaries (clipped to the shoreline): precinct and district polygons from VEST/TIGER run
+# out to the legal state line across lakes and bays; clip them to land for display (attributes are unchanged).
+SHORE = gpd.read_file(BASE / "shoreline" / "cb_2024_us_state_500k.shp").set_index("STUSPS").to_crs(5070)
+SHORE_TOL = 300          # metres: the 1:500k shoreline is generalized, so keep a margin
+
+
+def polys_only(geom):
+    if geom is None or geom.is_empty:
+        return geom
+    if geom.geom_type in ("Polygon", "MultiPolygon"):
+        return geom
+    parts = [p for p in shapely.get_parts(geom) if p.geom_type in ("Polygon", "MultiPolygon")]
+    parts = [q for p in parts for q in shapely.get_parts(p)]
+    return MultiPolygon(parts) if len(parts) > 1 else (parts[0] if parts else geom)
+
+
+def clip_to_land(g, ab):
+    land = SHORE.loc[ab.upper(), "geometry"].buffer(SHORE_TOL).simplify(50)
+    shapely.prepare(land)
+    geom = g.geometry.buffer(0)
+    inside = shapely.contains(land, geom.values)
+    new = geom.copy()
+    todo = ~inside
+    if todo.any():
+        clipped = shapely.intersection(geom.values[todo], land)
+        clipped = np.array([polys_only(x) for x in clipped], dtype=object)
+        empty = shapely.is_empty(clipped)
+        clipped[empty] = geom.values[todo][empty]      # fully offshore but populated: keep as is
+        new.loc[todo] = clipped
+    return g.set_geometry(new.values), int(todo.sum())
+
+
 prec_parts, dist_parts, summary = [], [], []
 for ab in states:
     t0 = time.time()
@@ -99,6 +131,7 @@ for ab in states:
     race = pd.read_csv(BASE / "race" / f"{ab}.csv").set_index("node").reindex(g.index).fillna(0)
     for c in ("vap", "bvap", "hvap"):
         g[c] = race[c].to_numpy(float)
+    g, nclip = clip_to_land(g, ab)
     miss = g["enacted"].isna()
     if miss.any():
         near = gpd.sjoin_nearest(g.loc[miss, ["geometry"]], g.loc[~miss, ["enacted", "geometry"]], how="left")
@@ -142,7 +175,7 @@ for ab in states:
                     "enacted_D": int((enc.winner == "D").sum()), "opt_D": int((opt.winner == "D").sum()),
                     "mm_enacted_black": need[0], "mm_enacted_hisp": need[1], "mm_opt_black": int(got[0]),
                     "mm_opt_hisp": int(got[1]), "vra_ok": bool(got[0] >= need[0] and got[1] >= need[1]), "pop": int(g["pop"].sum())})
-    log(f"{ab.upper()}: {len(g):,} precincts, {len(opt)} districts ({time.time()-t0:.0f}s)")
+    log(f"{ab.upper()}: {len(g):,} precincts ({nclip:,} touched the shoreline clip), {len(opt)} districts ({time.time()-t0:.0f}s)")
 
 precincts = pd.concat(prec_parts, ignore_index=True)
 districts = pd.concat(dist_parts, ignore_index=True)

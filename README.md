@@ -24,7 +24,10 @@ precincts that lean very differently. A state's score is the population-weighted
 * Search: [GerryChain](https://github.com/mggg/GerryChain) ReCom Markov chain with a short-burst optimizer, keeping every
   district contiguous and within ±0.5% of equal population, minimizing the dissimilarity above.
 * **Contiguity is rook:** a district must be connected across shared boundaries, not only at a corner. Islands and
-  other water crossings that the enacted map itself uses are connected by nearest-pair links.
+  other water crossings that the enacted map itself uses are connected by nearest-pair links. Large water polygons
+  (zero residents, mostly off the Census shoreline, such as Lake Michigan and Lake Erie) are leaves in the graph, so a
+  district cannot use open water as a corridor (`--land-only`). Precinct and district shapes are clipped to the Census
+  cartographic shoreline for display only; attributes are unchanged.
 * **Voting Rights Act floor:** every optimized plan keeps at least as many majority-Black and as many majority-Hispanic
   districts (more than 50% of voting-age population, 2020 census) as the enacted plan in that state. The rule is a hard
   constraint inside the search, so plans that fall below it are never accepted. All 50 states meet it (46 enacted
@@ -54,7 +57,8 @@ precincts that lean very differently. A state's score is the population-weighted
 * **Precinct results and boundaries:** Voting and Election Science Team (VEST), *2020 Precinct-Level Election Results*,
   Harvard Dataverse, <https://doi.org/10.7910/DVN/K7760H>, licensed **CC BY 4.0**. The vector tiles in `data/` are derived
   from it and carry the same attribution requirement.
-* **Population and districts:** U.S. Census Bureau, 2020 PL 94-171 redistricting data and TIGER/Line 2024 congressional districts (public domain).
+* **Population and districts:** U.S. Census Bureau, 2020 PL 94-171 redistricting data, TIGER/Line 2024 congressional districts
+  and the 2024 cartographic state boundaries (shoreline clipping), all public domain.
 * **Basemap:** [OpenFreeMap](https://openfreemap.org), © OpenMapTiles, data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
 * **Libraries:** [MapLibre GL JS](https://maplibre.org), [PMTiles](https://github.com/protomaps/PMTiles).
 
