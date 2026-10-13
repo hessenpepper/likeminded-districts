@@ -109,7 +109,7 @@ let YEAR = (new URLSearchParams(location.search).get('year') === '2024') ? '2024
 const CAND = {'2020': 'Biden', '2024': 'Harris'};
 const CREDIT = {
   '2020': 'Data: <a href="https://doi.org/10.7910/DVN/K7760H">VEST 2020 precinct results</a> (CC BY 4.0) &middot; U.S. Census 2020 (PL 94-171, TIGER).',
-  '2024': 'Data: 2024 precinct-level results and boundaries &copy; <a href="https://www.nytimes.com/interactive/2025/us/elections/2024-election-precinct-map.html">The New York Times</a> (&ldquo;2024 Precinct-Level Election Results&rdquo;), used under the NYT Computational Use of Data Agreement for non-commercial use: see the <a href="data/2024/LICENSE-NYT.txt">terms</a> and the <a href="data/2024/NYT-README.md">data notes and credits</a> &middot; U.S. Census 2020 (PL 94-171, TIGER). Alaska is not shown (no usable 2024 precinct data).'
+  '2024': 'Data: 2024 precinct-level results and boundaries &copy; <a href="https://www.nytimes.com/interactive/2025/us/elections/2024-election-precinct-map.html">The New York Times</a> (&ldquo;2024 Precinct-Level Election Results&rdquo;), used under the NYT Computational Use of Data Agreement for non-commercial use: see the <a href="data/2024/LICENSE-NYT.txt">terms</a> and the <a href="data/2024/NYT-README.md">data notes and credits</a> &middot; U.S. Census 2020 (PL 94-171, TIGER). Alaska, Oklahoma, South Dakota and Vermont are not shown (no usable or incomplete 2024 precinct data).'
 };
 const dataUrl = f => abs('data/' + YEAR + '/' + f);
 
@@ -333,7 +333,7 @@ function loadMeta() {
 function yearTexts() {
   document.querySelectorAll('.cand').forEach(e => { e.textContent = CAND[YEAR]; });
   document.querySelectorAll('.yr').forEach(e => { e.textContent = YEAR; });
-  document.querySelectorAll('.yr24note').forEach(e => { e.textContent = YEAR === '2024' ? ' (2024 exception: California, 16 of the enacted 18 majority-Hispanic districts; see the README)' : ''; });
+  document.querySelectorAll('.yr24note').forEach(e => { e.textContent = ''; });
   document.querySelectorAll('.optname').forEach(e => { e.textContent = YEAR === '2024' ? 'adjusted' : 'optimized'; });
   document.getElementById('credit').innerHTML = CREDIT[YEAR];
   document.querySelector('input[name=plan][value=optimized]').parentElement.lastChild.textContent =

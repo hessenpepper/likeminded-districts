@@ -28,8 +28,9 @@ precincts that lean very differently. A state's score is the population-weighted
   dissimilarity that satisfies the rules below was used, whatever its starting point.
 * **2024 maps:** units are the New York Times 2024 precinct results and boundaries. The final 2020 optimized plan is carried
   onto the 2024 precincts through census blocks, rebalanced to equal population, and re-optimized from there
-  ("adjusted"), so later maps change little from the previous one. No 2024 map is drawn from scratch. Alaska has no usable
-  2024 precinct data and is not shown for 2024.
+  ("adjusted"), so later maps change little from the previous one. No 2024 map is drawn from scratch. Four states are not
+  shown for 2024: Alaska (no usable 2024 precinct data) and Oklahoma, South Dakota and Vermont (the NYT precinct files
+  are incomplete: roughly 35%, 17% and 11% of the two-party vote is missing, which would distort their scores).
 * Search: [GerryChain](https://github.com/mggg/GerryChain) ReCom Markov chain with a short-burst optimizer, keeping every
   district contiguous and within ±0.5% of equal population, minimizing the dissimilarity above.
 * **Contiguity is rook:** a district must be connected across shared boundaries, not only at a corner. Islands and
@@ -41,8 +42,9 @@ precincts that lean very differently. A state's score is the population-weighted
   districts (more than 50% of voting-age population, 2020 census) as the enacted plan in that state. The rule is a hard
   constraint inside the search, so plans that fall below it are never accepted. This is a count-based check, not a legal
   VRA analysis: it does not test whether minority voters can elect candidates of their choice or racially polarized
-  voting. **Known exception (2024):** California's carried 2020 plan has 16 majority-Hispanic districts on the 2024
-  precincts against 18 in the enacted plan, and the 2024 adjusted plan keeps that count of 16.
+  voting. For 2024 the floor is applied on the 2024 precincts; California's carried plan first fell to 16
+  majority-Hispanic districts there (against 18 enacted), so its adjusted run restores 18 with a 1-point margin over 50%
+  before optimizing, and keeps it.
 * Searches are time-boxed by CPU time or stopped on a stall rule (less than 0.1% gain over 20,000 steps). Some states hit
   the time cap while still improving slowly, so longer runs could do a bit better; seed-to-seed spread in testing was
   about 1.5% of the score.

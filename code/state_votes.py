@@ -13,6 +13,8 @@ out = {}
 for ab in ALL:
     if not any((d / f"{ab}.gpkg").exists() for d in DIRS):
         continue            # Alaska has no 2024 precinct data
+    if YEAR == "2024" and ab in ("ok", "sd", "vt"):
+        continue            # incomplete NYT precinct files (OK, SD, VT): left out of the 2024 layer
     p = next(d / f"{ab}.gpkg" for d in DIRS if (d / f"{ab}.gpkg").exists())
     df = pyogrio.read_dataframe(p, columns=["D", "R"], read_geometry=False)
     out[ab.upper()] = [float(df["D"].sum()), float(df["R"].sum())]

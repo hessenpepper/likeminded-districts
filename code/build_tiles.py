@@ -34,6 +34,11 @@ else:
 ALL = ("al ak az ar ca co ct de fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok "
        "or pa ri sc sd tn tx ut vt va wa wv wi wy").split()
 states = [s.lower() for s in sys.argv[1:]] or [s for s in ALL if any((d / f"{s}.gpkg").exists() for d in STATE_DIRS)]
+# 2024: the NYT precinct files for these states are incomplete (OK ~35% of votes missing, SD ~17%, VT ~11%; Alaska has none),
+# so they are left out of the 2024 layer (user decision 2026-10-13)
+EXCLUDE_2024 = {"ak", "ok", "sd", "vt"}
+if YEAR == "2024":
+    states = [s for s in states if s not in EXCLUDE_2024]
 OUT = BASE / (("tiles_test" if sys.argv[1:] else "tiles") + ("2024" if YEAR == "2024" else ""))
 OUT.mkdir(exist_ok=True)
 
