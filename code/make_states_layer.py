@@ -82,6 +82,14 @@ states = gpd.GeoDataFrame(feats, crs=4326).set_index("st").join(tab).reset_index
 states["pop"] = states["pop"].astype(int)
 states.to_file(DATA / "states.geojson", driver="GeoJSON", COORDINATE_PRECISION=3)
 
+# one label point per state (the symbol layer would otherwise put a label on every polygon part: islands, coast pieces)
+def _label_point(g):
+    parts = list(g.geoms) if g.geom_type == "MultiPolygon" else [g]
+    return max(parts, key=lambda q: q.area).representative_point()
+labels = states.copy()
+labels["geometry"] = [_label_point(g) for g in states.geometry]
+labels.to_file(DATA / "state_labels.geojson", driver="GeoJSON", COORDINATE_PRECISION=3)
+
 # coverage check: every district piece must lie inside its state's outline
 shape_by_st = {r["st"]: r["geometry"] for _, r in states.iterrows()}
 bad = []
