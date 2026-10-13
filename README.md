@@ -1,7 +1,9 @@
 # Like-Minded Districts
 
 An interactive map comparing the **enacted U.S. congressional districts** with **computer-optimized districts** that group
-"like-minded" precincts, using 2020 presidential results. Zoom in for precinct-level detail.
+"like-minded" precincts. Use the **year switch** to choose between two elections: **2020** (optimized from scratch on
+VEST precincts) and **2024** (the 2020 optimized maps, adjusted on New York Times 2024 precincts). Zoom in for
+precinct-level detail.
 
 **Live map:** see the repository's GitHub Pages site (`index.html`).
 
@@ -20,7 +22,14 @@ precincts that lean very differently. A state's score is the population-weighted
 
 ## How the optimized plans were made
 
-* Units: 2020 VEST precincts (175k+ nationwide), joined to 2020 census block populations (PL 94-171).
+* **2020 maps:** units are 2020 VEST precincts (175k+ nationwide), joined to 2020 census block populations (PL 94-171).
+  This is the "first generation" map: it is built from scratch (random starting maps are among the starting points),
+  because the enacted maps are themselves products of line-drawing. For every state the plan with the lowest
+  dissimilarity that satisfies the rules below was used, whatever its starting point.
+* **2024 maps:** units are the New York Times 2024 precinct results and boundaries. The final 2020 optimized plan is carried
+  onto the 2024 precincts through census blocks, rebalanced to equal population, and re-optimized from there
+  ("adjusted"), so later maps change little from the previous one. No 2024 map is drawn from scratch. Alaska has no usable
+  2024 precinct data and is not shown for 2024.
 * Search: [GerryChain](https://github.com/mggg/GerryChain) ReCom Markov chain with a short-burst optimizer, keeping every
   district contiguous and within ±0.5% of equal population, minimizing the dissimilarity above.
 * **Contiguity is rook:** a district must be connected across shared boundaries, not only at a corner. Islands and
@@ -30,13 +39,13 @@ precincts that lean very differently. A state's score is the population-weighted
   cartographic shoreline for display only; attributes are unchanged.
 * **Voting Rights Act floor:** every optimized plan keeps at least as many majority-Black and as many majority-Hispanic
   districts (more than 50% of voting-age population, 2020 census) as the enacted plan in that state. The rule is a hard
-  constraint inside the search, so plans that fall below it are never accepted. All 50 states meet it (46 enacted
-  majority-minority districts, 50 optimized). This is a count-based check, not a legal VRA analysis: it does not test
-  whether minority voters can elect candidates of their choice or racially polarized voting.
-* The optimized plans start from the enacted map (or from the best earlier plan) and are then optimized. Searches are
-  time-boxed (90 minutes per state) or stopped on a stall rule (less than 0.1% gain over 20,000 steps). About a third of
-  the states hit the time cap while still improving slowly, so longer runs could do a bit better; seed-to-seed spread in
-  testing was about 1.5% of the score.
+  constraint inside the search, so plans that fall below it are never accepted. This is a count-based check, not a legal
+  VRA analysis: it does not test whether minority voters can elect candidates of their choice or racially polarized
+  voting. **Known exception (2024):** California's carried 2020 plan has 16 majority-Hispanic districts on the 2024
+  precincts against 18 in the enacted plan, and the 2024 adjusted plan keeps that count of 16.
+* Searches are time-boxed by CPU time or stopped on a stall rule (less than 0.1% gain over 20,000 steps). Some states hit
+  the time cap while still improving slowly, so longer runs could do a bit better; seed-to-seed spread in testing was
+  about 1.5% of the score.
 
 ## Caveats, please read
 
@@ -47,16 +56,21 @@ precincts that lean very differently. A state's score is the population-weighted
   precincts (each precinct goes to the district holding most of its residents), so district populations are roughly
   ±1% from equal and a few split precincts are reassigned. Several states have redrawn maps since 2024; those changes are
   not reflected.
-* **One election.** Everything uses the 2020 presidential race. "Biden-won" counts are not House results.
+* **One election per year.** Each year uses that year's presidential race (2020: Biden/Trump; 2024: Harris/Trump).
+  "Biden-won" and "Harris-won" counts are not House results.
 * Population-weighting assumes non-voters (including children and non-citizens) vote like their precinct, a strong assumption.
 * Dissimilarity rewards grouping similar voters and is not a measure of fairness. It says nothing about competitiveness,
   representation or legality.
 
 ## Data sources and credit
 
-* **Precinct results and boundaries:** Voting and Election Science Team (VEST), *2020 Precinct-Level Election Results*,
-  Harvard Dataverse, <https://doi.org/10.7910/DVN/K7760H>, licensed **CC BY 4.0**. The vector tiles in `data/` are derived
-  from it and carry the same attribution requirement.
+* **2020 precinct results and boundaries:** Voting and Election Science Team (VEST), *2020 Precinct-Level Election Results*,
+  Harvard Dataverse, <https://doi.org/10.7910/DVN/K7760H>, licensed **CC BY 4.0**. The vector tiles in `data/2020/` are
+  derived from it and carry the same attribution requirement.
+* **2024 precinct results and boundaries:** *2024 Precinct-Level Election Results*, The New York Times
+  (<https://www.nytimes.com/interactive/2025/us/elections/2024-election-precinct-map.html>), used under the NYT
+  Computational Use of Data Agreement, **for non-commercial use only**. Credit is required in any public display, and
+  the terms must be passed on to recipients: see `data/2024/LICENSE-NYT.txt` and `data/2024/NYT-README.md`.
 * **Population and districts:** U.S. Census Bureau, 2020 PL 94-171 redistricting data, TIGER/Line 2024 congressional districts
   and the 2024 cartographic state boundaries (shoreline clipping), all public domain.
 * **Basemap:** [OpenFreeMap](https://openfreemap.org), © OpenMapTiles, data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
@@ -68,8 +82,10 @@ precincts that lean very differently. A state's score is the population-weighted
   Districts can be shaded by Democratic share or by dissimilarity (one fixed scale for all states: 0.10 to 0.50+).
   Zoomed out, each state is shaded and labeled by the average dissimilarity of its districts (population-weighted, same scale);
   the side panel shows seat shares as percentages next to Biden's share of the two-party vote, nationally or for a chosen state.
-* `data/states.geojson` (state outlines with seat counts, dissimilarity and vote share), `data/states.json`, `data/stats.json`: the state list and headline numbers.
-* `data/districts.pmtiles`, `data/precincts-1..4.pmtiles`: the precinct tiles are split into four files by state group.
+* `data/2020/` and `data/2024/`: one folder per year, loaded on demand by the year switch. Each has
+  `states.geojson` (state outlines with seat counts, dissimilarity and vote share), `states.json`, `stats.json`
+  (the state list and headline numbers), `districts.pmtiles` and `precincts-1..4.pmtiles` (the precinct tiles are split
+  into four files by state group). `data/2024/` also carries the NYT license and data notes.
 * `code/`: the scripts that produced the results (`pipeline.py` per-state download and optimization with rook contiguity,
   the VRA floor and warm starts; `driver*.py` and `rook_orchestrator.py` batch runners; `build_tiles.py` tile builder;
   `state_votes.py` / `make_states_layer.py` state-level numbers; `aggregate.py` cross-state comparison).
@@ -77,5 +93,9 @@ precincts that lean very differently. A state's score is the population-weighted
 ## License
 
 * **Code** (`index.html` and everything in `code/`): [MIT License](LICENSE).
-* **Data** (`data/*.pmtiles` and the JSON files): derived from VEST precinct data, so they are **CC BY 4.0**; credit VEST
-  and the Census Bureau as listed above. The MIT license does not cover the data.
+* **Data, 2020** (`data/2020/`): derived from VEST precinct data, so it is **CC BY 4.0**; credit VEST and the Census
+  Bureau as listed above.
+* **Data, 2024** (`data/2024/`): derived from New York Times precinct data, so it is available **for non-commercial use
+  only** under the NYT Computational Use of Data Agreement (`data/2024/LICENSE-NYT.txt`); credit the New York Times as
+  listed above and pass these terms on. It is not CC BY.
+* The MIT license covers the code only, not the data.

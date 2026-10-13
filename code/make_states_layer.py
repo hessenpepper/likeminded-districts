@@ -4,6 +4,7 @@ state outlines, each state's seat counts, population-weighted dissimilarity of i
     python make_states_layer.py      (needs state_votes.json from state_votes.py)
 Writes data/states.geojson, data/states.json (picker, with bboxes) and updates data/stats.json."""
 import json
+import os
 from pathlib import Path
 
 import geopandas as gpd
@@ -12,9 +13,11 @@ import pandas as pd
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 
-SITE = Path(__file__).resolve().parent.parent   # the repository folder
-DATA = SITE / "data"
+SITE = Path(os.environ.get("SITE_DIR", r"C:\Users\SteveHess\likeminded-districts"))   # the site repo clone
+YEAR = os.environ.get("YEAR", "2020")
+DATA = SITE / "data" / YEAR
 HERE = Path(__file__).parent
+BASE = Path(os.environ.get("GERRY_BASE", r"C:\gerry-compute"))   # office PC work folder
 NAMES = {"AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California", "CO": "Colorado",
          "CT": "Connecticut", "DE": "Delaware", "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
          "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana",
@@ -28,10 +31,17 @@ NAMES = {"AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA
 BBOX_OVERRIDE = {"AK": [-170.0, 51.2, -129.5, 71.6]}   # the Aleutians cross the antimeridian
 MIN_PART_DEG2 = 0.002                                   # drop specks smaller than ~25 km2
 
-votes = json.loads((HERE / "state_votes.json").read_text())
+def first_existing(*paths):
+    return next(p for p in paths if p.exists())
+
+
+votes_name = "state_votes_2024.json" if YEAR == "2024" else "state_votes.json"
+votes = json.loads(first_existing(HERE / votes_name, BASE / votes_name).read_text())
 # exact majority-minority counts from the tile build (tile_summary.json = tiles\states.json); the rounded district
 # percentages in the tiles can't separate a district at 50.0x% from one at 49.9x%
-mm = {r["st"]: r for r in json.loads((HERE / "tile_summary.json").read_text())}
+ts_name = "tile_summary_2024.json" if YEAR == "2024" else "tile_summary.json"
+ts_path = first_existing(HERE / ts_name, BASE / ("tiles2024" if YEAR == "2024" else "tiles") / "states.json")
+mm = {r["st"]: r for r in json.loads(ts_path.read_text())}
 full = gpd.read_file(DATA / "districts.pmtiles", layer="districts")                  # attributes: all districts survive here
 print(len(full), "tile pieces read at full detail")
 raw = full.to_crs(4326)      # outlines come from the same full-detail pieces (both plans); reader returns Web Mercator

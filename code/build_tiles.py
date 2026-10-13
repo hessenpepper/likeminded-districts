@@ -17,13 +17,24 @@ import pyogrio
 import shapely
 from shapely.geometry import MultiPolygon, Polygon
 
+import os
+
 BASE = Path(r"C:\gerry-compute")
-STATE_DIRS = [BASE / "states", BASE / "laptop-data" / "states"]
-RESULT_DIRS = [BASE / "vra" / "out"]       # rook-contiguous plans optimized under the VRA floor (majority-minority count)
+YEAR = os.environ.get("YEAR", "2020")        # 2020: VEST 2020 precincts; 2024: NYT 2024 precincts (same 2020 census population)
+if YEAR == "2024":
+    STATE_DIRS = [BASE / "y2024" / "states"]
+    RESULT_DIRS = [BASE / "y2024" / "out"]    # adjusted plans: the final 2020 plan carried onto the 2024 precincts
+    RESULT_GLOB = "{ab}_adj*.json"
+    RACE_DIR = BASE / "y2024" / "race"
+else:
+    STATE_DIRS = [BASE / "states", BASE / "laptop-data" / "states"]
+    RESULT_DIRS = [BASE / "vra" / "out"]       # rook-contiguous plans optimized under the VRA floor (majority-minority count)
+    RESULT_GLOB = "{ab}_*.json"
+    RACE_DIR = BASE / "race"
 ALL = ("al ak az ar ca co ct de fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok "
        "or pa ri sc sd tn tx ut vt va wa wv wi wy").split()
-states = [s.lower() for s in sys.argv[1:]] or ALL
-OUT = BASE / ("tiles_test" if sys.argv[1:] else "tiles")
+states = [s.lower() for s in sys.argv[1:]] or [s for s in ALL if any((d / f"{s}.gpkg").exists() for d in STATE_DIRS)]
+OUT = BASE / (("tiles_test" if sys.argv[1:] else "tiles") + ("2024" if YEAR == "2024" else ""))
 OUT.mkdir(exist_ok=True)
 
 
@@ -38,6 +49,11 @@ def find_gpkg(ab):
     raise FileNotFoundError(ab)
 
 
+# first-generation principle: the enacted map is not a starting point for these states, so only plans grown from random
+# starting maps (result files tagged rnd) are shown as optimized (none compliant: the enacted plan is shown)
+RANDOM_ONLY = set()    # empty: the most optimal compliant plan is shown, whatever its lineage
+
+
 def mm_counts(parts, vv, bv, hv):
     """(# majority-Black, # majority-Hispanic) districts by voting-age population."""
     parts = np.asarray(parts, dtype=np.int64)
@@ -47,20 +63,31 @@ def mm_counts(parts, vv, bv, hv):
     return int((B[live] / V[live] > 0.5).sum()), int((H[live] / V[live] > 0.5).sum())
 
 
+ALLOW_RELAXED = os.environ.get("ALLOW_RELAXED") == "1"
+
+
 def best_candidate(ab, index, need, vv, bv, hv):
     """Lowest-dissimilarity saved plan that keeps at least the enacted count of majority-Black and majority-Hispanic
     districts. Returns None when no saved plan qualifies (the site then shows the enacted plan as the optimized one)."""
     cands = []
     for d in RESULT_DIRS:
-        for f in glob.glob(str(d / f"{ab}_*.json")):
+        for f in glob.glob(str(d / RESULT_GLOB.format(ab=ab))):
             f = Path(f)
+            if ab in RANDOM_ONLY and "rnd" not in f.name:
+                continue
             pk = f.with_name(f.stem + "_best.pkl")
             if pk.exists():
                 r = json.loads(f.read_text())
                 if "optimized" in r:
                     plan = pd.Series(pickle.load(open(pk, "rb"))).reindex(index).astype(int).to_numpy()
                     nb, nh = mm_counts(plan, vv, bv, hv)
-                    if nb >= need[0] and nh >= need[1]:
+                    need_c = need
+                    vr = r.get("vra") or {}
+                    if ALLOW_RELAXED and vr.get("relaxed") and vr.get("floor"):
+                        # user decision 2026-10-13: for 2024 a plan that ran with a lowered floor (the carried 2020 plan has
+                        # fewer majority-minority districts on the 2024 precincts) is accepted at its own floor
+                        need_c = (min(need[0], vr["floor"][0]), min(need[1], vr["floor"][1]))
+                    if nb >= need_c[0] and nh >= need_c[1]:
                         cands.append((r["optimized"]["obj"], f, pk, r["enacted"]["obj"], (nb, nh)))
     return min(cands, key=lambda c: c[0]) if cands else None
 
@@ -128,7 +155,7 @@ prec_parts, dist_parts, summary = [], [], []
 for ab in states:
     t0 = time.time()
     g = gpd.read_file(find_gpkg(ab)).set_index("node", drop=False)
-    race = pd.read_csv(BASE / "race" / f"{ab}.csv").set_index("node").reindex(g.index).fillna(0)
+    race = pd.read_csv(RACE_DIR / f"{ab}.csv").set_index("node").reindex(g.index).fillna(0)
     for c in ("vap", "bvap", "hvap"):
         g[c] = race[c].to_numpy(float)
     g, nclip = clip_to_land(g, ab)
@@ -136,6 +163,11 @@ for ab in states:
     if miss.any():
         near = gpd.sjoin_nearest(g.loc[miss, ["geometry"]], g.loc[~miss, ["enacted", "geometry"]], how="left")
         g.loc[miss, "enacted"] = near[~near.index.duplicated()]["enacted"]
+    still = g["enacted"].isna()
+    if still.any():     # e.g. a precinct with an empty/invalid geometry that sjoin_nearest cannot place
+        log(f"{ab.upper()}: {int(still.sum())} precinct(s) without an enacted district after the nearest-join; "
+            f"using the state's most common district (pop {float(g.loc[still, 'pop'].sum()):.0f})")
+        g.loc[still, "enacted"] = g["enacted"].mode().iloc[0]
     g["enacted"] = g["enacted"].astype(int)
     vv, bv, hv = (g[c].to_numpy() for c in ("vap", "bvap", "hvap"))
     need = mm_counts(g["enacted"].to_numpy(), vv, bv, hv)
